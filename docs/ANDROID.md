@@ -46,15 +46,21 @@ binding wheel on top of OCCT itself. Linking OCCT directly removes both layers.
 
 ## What moves, and how hard each part is
 
+2403 lines of Python in total, of which the geometry is the smaller half.
+
 | Piece | Lines | Difficulty |
 |---|---|---|
-| `solid.py` | ~480 | **Mechanical.** Already calls the C++ API through bindings that mirror it one to one. `BRepAlgoAPI_Cut`, `BRepBuilderAPI_MakeFace`, `BRepPrimAPI_MakeCylinder` are the same calls with the same arguments. |
-| `topology.py` | ~180 | Plain graph work. No dependencies. |
-| `parser.py` | ~330 | CSV reading and classification. Standard library only today. |
-| `planes.py` | ~70 | Needs an SVD. Eigen, or twenty lines by hand for a 3×3. |
-| `geometry.py` | ~110 | Plane geometry, no dependencies. |
-| `tessellate.py` | ~120 | `BRepMesh_IncrementalMesh` and a triangle walk. Direct. |
-| `server.py`, `store.py` | ~340 | HTTP service and a JSON file. Any small C++ HTTP library. |
+| `solid.py` | 612 | **Mechanical.** Already calls the C++ API through bindings that mirror it one to one. `BRepAlgoAPI_Cut`, `BRepBuilderAPI_MakeFace`, `BRepPrimAPI_MakeCylinder` are the same calls with the same arguments. |
+| `parser.py` | 455 | CSV reading and classification. Standard library only today. |
+| `server.py` | 415 | HTTP service. Any small C++ HTTP library. |
+| `topology.py` | 165 | Plain graph work. No dependencies. |
+| `model.py` | 142 | Plain structs. |
+| `tessellate.py` | 137 | `BRepMesh_IncrementalMesh` and a triangle walk. Direct. |
+| `store.py` | 117 | A JSON file on disk. |
+| `designx.py` | 109 | IGES and STEP curve writing. Direct. |
+| `geometry.py` | 87 | Plane geometry, no dependencies. |
+| `planes.py` | 76 | Needs an SVD. Eigen, or twenty lines by hand for a 3×3. |
+| `settings.py` | 65 | Plain struct plus JSON. |
 | React interface | all of it | **Unchanged.** |
 
 Two real substitutions, neither of them research:
