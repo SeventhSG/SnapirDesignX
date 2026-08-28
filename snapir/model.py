@@ -93,7 +93,11 @@ class Room:
     issues: list[Issue] = field(default_factory=list)
 
     # set by the user or by app settings, not present in the survey data
-    outline_source: str = "inferred"   # "surveyed layer" | "inferred"
+    # "drawn" when the surveyor's own lines describe the ring, which is the
+    # only source that needs no guessing at all.
+    outline_source: str = "inferred"   # "drawn" | "surveyed layer" | "inferred"
+    segments: list[tuple[str, str]] = field(default_factory=list)
+    links: list[tuple[str, str]] = field(default_factory=list)
     floor_z: Optional[float] = None
     ceiling_z: Optional[float] = None
     wall_thickness: Optional[float] = None

@@ -4,4 +4,10 @@ __pycache__/
 build/
 dist/
 *.spec
+!packaging/backend.spec
 out/
+app/node_modules/
+app/dist/
+app/release/
+app/resources/
+packaging/build/

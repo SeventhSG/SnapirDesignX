@@ -1,0 +1,74 @@
+{
+  "name": "snapir-design-x",
+  "productName": "Snapir Design X",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Leica iCON room surveys to solid bodies",
+  "author": {
+    "name": "Snapir Design"
+  },
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron -c cyan,yellow \"vite\" \"wait-on tcp:5173 && cross-env SNAPIR_DEV=1 electron .\"",
+    "build": "vite build",
+    "backend": "python -m PyInstaller --noconfirm ../packaging/backend.spec --distpath resources",
+    "dist": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.169.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.snapirdesign.designx",
+    "productName": "Snapir Design X",
+    "directories": {
+      "output": "release",
+      "buildResources": "buildResources"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "buildResources/icon.ico",
+      "artifactName": "SnapirDesignX-${version}-setup.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Snapir Design X",
+      "createDesktopShortcut": true,
+      "installerIcon": "buildResources/icon.ico",
+      "uninstallerIcon": "buildResources/icon.ico",
+      "differentialPackage": false
+    }
+  }
+}

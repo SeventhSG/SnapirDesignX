@@ -11,6 +11,7 @@ the body is watertight because the kernel refuses to build it otherwise.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from shapely.geometry import Polygon
@@ -21,6 +22,12 @@ from .planes import Plane, fit_or_level, level_plane
 from .settings import BuildSettings
 
 CM_TO_MM = 10.0
+
+
+def cm(mm: float) -> float:
+    """Settings are millimetres; the survey and this module work in
+    centimetres. One conversion, in one place."""
+    return mm / 10.0
 
 
 class BuildError(RuntimeError):
@@ -148,7 +155,7 @@ def _offset_ring(ring, distance: float):
 
 def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ):
     """A box spanning the wall at an opening, overshooting both faces."""
-    reach = cfg.wall_thickness * 3.0
+    reach = cm(cfg.wall_thickness) * 3.0
     ax, ay = op.left.x, op.left.y
     bx, by = op.right.x, op.right.y
     dx, dy = bx - ax, by - ay
@@ -171,7 +178,8 @@ def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ):
     return _prism(corners, level_plane(op.sill), level_plane(op.head), occ)
 
 
-def build_room(room: Room, cfg: BuildSettings, openings=None):
+def build_room(room: Room, cfg: BuildSettings, openings=None,
+               fixture_overrides: dict | None = None):
     """Build one room shell. Returns an OCCT solid."""
     if len(room.outline) < 3:
         raise BuildError(f"{room.name}: outline has fewer than three points")
@@ -180,13 +188,13 @@ def build_room(room: Room, cfg: BuildSettings, openings=None):
     floor, ceiling = room_planes(room, cfg)
     inner_ring = [p.xy for p in room.outline]
 
-    thickness = room.wall_thickness if room.wall_thickness is not None \
-        else cfg.wall_thickness
+    thickness = cm(room.wall_thickness if room.wall_thickness is not None
+                 else cfg.wall_thickness)
     outer_ring = _offset_ring(inner_ring, thickness)
 
-    outer_floor = Plane(floor.px, floor.py, floor.pz - cfg.floor_thickness,
+    outer_floor = Plane(floor.px, floor.py, floor.pz - cm(cfg.floor_thickness),
                         floor.nx, floor.ny, floor.nz)
-    outer_ceiling = Plane(ceiling.px, ceiling.py, ceiling.pz + cfg.ceiling_thickness,
+    outer_ceiling = Plane(ceiling.px, ceiling.py, ceiling.pz + cm(cfg.ceiling_thickness),
                           ceiling.nx, ceiling.ny, ceiling.nz)
 
     outer = _prism(outer_ring, outer_floor, outer_ceiling, occ)
@@ -207,7 +215,8 @@ def build_room(room: Room, cfg: BuildSettings, openings=None):
             shape = c.Shape()
 
     if cfg.include_fixtures:
-        shape, stray = _add_fixtures(shape, room, inner_ring, cfg, occ)
+        shape, stray = _add_fixtures(shape, room, inner_ring, cfg, occ,
+                                     fixture_overrides)
         if stray:
             from .model import Issue
             room.issues.append(Issue(
@@ -260,113 +269,344 @@ def export_step(shape, path, schema: str = "AP214") -> Path:
         raise BuildError(f"STEP write failed: {path}")
     return path
 
+# ---------------------------------------------------------------- fixtures
+
+
+@dataclass
+class Fixture:
+    """One building service, seated on the wall it belongs to."""
+    name: str
+    kind: str                 # "socket" | "pipe"
+    mode: str                 # "box" | "hole" | "stub"
+    solid: object
+    seat: tuple[float, float]
+    normal: tuple[float, float]
+    reach: float              # cm the fixture stands out from the inner face
+
 
 def _wall_frame(x: float, y: float, ring):
     """Seat a surveyed point on its wall and return the inward normal.
 
-    Service points are shot a centimetre or two off the surface, so the raw
-    coordinate floats in space. Projecting it onto the nearest wall puts the
-    fixture where it physically is.
+    Service points are never shot on the surface. A socket reads a centimetre
+    or two out at the faceplate, a pipe reads wherever its open end happens to
+    be, up to ten centimetres into the room. Projecting onto the nearest wall
+    is what puts the fixture where the building actually has it.
     """
     from shapely.geometry import Point, Polygon
-    from .geometry import project_onto_edges
 
     idx, seat, dist = project_onto_edges((x, y), list(ring))
     a, b = ring[idx], ring[(idx + 1) % len(ring)]
     dx, dy = b[0] - a[0], b[1] - a[1]
     length = (dx * dx + dy * dy) ** 0.5 or 1.0
     nx, ny = -dy / length, dx / length
-    # Point the normal into the room.
+
     poly = Polygon(ring)
     if not poly.contains(Point(seat[0] + nx * 0.5, seat[1] + ny * 0.5)):
-        nx, ny = -nx, -ny
+        nx, ny = -nx, -ny            # normal must point into the room
     return seat, (nx, ny), (dx / length, dy / length), dist
 
 
-def _socket_solid(pt, ring, cfg: BuildSettings, occ):
-    """A back box on the wall face, protruding into the room."""
-    (sx, sy), (nx, ny), (tx, ty), _d = _wall_frame(pt.x, pt.y, ring)
-    hw = cfg.socket_width / 2
-    out = cfg.socket_depth
-    back = cfg.wall_thickness * 0.5          # bed it into the wall so it fuses
+def _socket_shape(pt, ring, cfg: BuildSettings, mode: str, occ):
+    """A back box standing proud of the wall, or a recess cut into it.
+
+    Anchored on the seat rather than the reading, and always reaching into the
+    wall by `socket_embed`, so it cannot end up floating in the room.
+    """
+    (sx, sy), (nx, ny), (tx, ty), dist = _wall_frame(pt.x, pt.y, ring)
+    hw = cm(cfg.socket_width) / 2
+
+    if mode == "hole":
+        near, far = 0.5, -cm(cfg.socket_recess)          # into the wall
+    else:
+        near = max(dist, cm(cfg.socket_proud))           # out to the faceplate
+        far = -cm(cfg.socket_embed)
     corners = [
-        (sx + tx * hw - nx * back, sy + ty * hw - ny * back),
-        (sx - tx * hw - nx * back, sy - ty * hw - ny * back),
-        (sx - tx * hw + nx * out, sy - ty * hw + ny * out),
-        (sx + tx * hw + nx * out, sy + ty * hw + ny * out),
+        (sx + tx * hw + nx * far, sy + ty * hw + ny * far),
+        (sx - tx * hw + nx * far, sy - ty * hw + ny * far),
+        (sx - tx * hw + nx * near, sy - ty * hw + ny * near),
+        (sx + tx * hw + nx * near, sy + ty * hw + ny * near),
     ]
-    half = cfg.socket_height / 2
-    return _prism(corners, level_plane(pt.z - half), level_plane(pt.z + half), occ)
+    half = cm(cfg.socket_height) / 2
+    solid = _prism(corners, level_plane(pt.z - half), level_plane(pt.z + half), occ)
+    return solid, (sx, sy), (nx, ny), near
 
 
-def _pipe_solid(pt, ring, cfg: BuildSettings):
-    """A pipe stub coming out of the wall, along the wall normal."""
+def _pipe_shape(pt, ring, cfg: BuildSettings, mode: str):
+    """A pipe stub reaching the surveyed point, or a sleeve through the wall.
+
+    The surveyed reading is the open end of the pipe, so the stub is built to
+    reach exactly that far and no further. Nothing is invented.
+    """
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
     from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 
-    (sx, sy), (nx, ny), _t, _d = _wall_frame(pt.x, pt.y, ring)
-    back = cfg.wall_thickness * 0.5
-    origin = gp_Pnt((sx - nx * back) * CM_TO_MM, (sy - ny * back) * CM_TO_MM,
+    (sx, sy), (nx, ny), _t, dist = _wall_frame(pt.x, pt.y, ring)
+    reach = cm(cfg.pipe_length) or max(dist, cm(cfg.pipe_min_length))
+    embed = cm(cfg.wall_thickness) * 1.5 if mode == "hole" else cm(cfg.pipe_embed)
+
+    origin = gp_Pnt((sx - nx * embed) * CM_TO_MM, (sy - ny * embed) * CM_TO_MM,
                     pt.z * CM_TO_MM)
     axis = gp_Ax2(origin, gp_Dir(nx, ny, 0.0))
-    return BRepPrimAPI_MakeCylinder(
-        axis, cfg.pipe_diameter / 2 * CM_TO_MM,
-        (cfg.pipe_length + back) * CM_TO_MM).Shape()
+    height = (embed + (0.5 if mode == "hole" else reach)) * CM_TO_MM
+    solid = BRepPrimAPI_MakeCylinder(axis, cm(cfg.pipe_diameter) / 2 * CM_TO_MM,
+                                     height).Shape()
+    return solid, (sx, sy), (nx, ny), reach
 
 
-def fixture_solids(room: Room, ring, cfg: BuildSettings, occ):
-    """Every service fixture in the room, as (kind, solid) pairs."""
+def _merge_sockets(room: Room, ring, cfg: BuildSettings):
+    """Group sockets that sit shoulder to shoulder into single runs.
+
+    Two boxes 80 mm wide whose centres are 80 mm apart share a face. Left
+    alone they fuse into one lumpy body with a seam down the middle; grouped,
+    they become one clean outlet the length of the run, which is what a double
+    or triple socket actually is.
+    """
     from .model import Role
 
-    out = []
-    for p in room.points:
+    sockets = [p for p in room.points if p.role is Role.SOCKET]
+    seats = {}
+    for p in sockets:
+        seat, _n, tan, _d = _wall_frame(p.x, p.y, ring)
+        idx, _s, _dd = project_onto_edges(seat, list(ring))
+        # Distance along the wall, so neighbours can be ordered and measured.
+        along = seat[0] * tan[0] + seat[1] * tan[1]
+        seats[p.name] = (idx, along)
+
+    half = cm(cfg.socket_width) / 2
+    gap = cm(cfg.sockets_merge_gap)
+    groups: list[list] = []
+    for p in sorted(sockets, key=lambda q: (seats[q.name][0], seats[q.name][1])):
+        idx, along = seats[p.name]
+        if groups:
+            last = groups[-1][-1]
+            lidx, lalong = seats[last.name]
+            same_wall = lidx == idx
+            touching = abs(along - lalong) - 2 * half <= gap
+            level = abs(p.z - last.z) <= cm(cfg.socket_height)
+            if same_wall and touching and level:
+                groups[-1].append(p)
+                continue
+        groups.append([p])
+    return groups
+
+
+def _socket_run(group, ring, cfg: BuildSettings, mode: str, occ):
+    """One box spanning a whole run of touching sockets."""
+    if len(group) == 1:
+        return _socket_shape(group[0], ring, cfg, mode, occ)
+
+    (sx, sy), (nx, ny), (tx, ty), dist = _wall_frame(
+        sum(p.x for p in group) / len(group),
+        sum(p.y for p in group) / len(group), ring)
+
+    # Span from the outer edge of the first box to the outer edge of the last.
+    alongs = [ (p.x - sx) * tx + (p.y - sy) * ty for p in group ]
+    half = cm(cfg.socket_width) / 2
+    lo, hi = min(alongs) - half, max(alongs) + half
+
+    if mode == "hole":
+        near, far = 0.5, -cm(cfg.socket_recess)
+    else:
+        near = max(dist, cm(cfg.socket_proud))
+        far = -cm(cfg.socket_embed)
+
+    corners = [
+        (sx + tx * lo + nx * far, sy + ty * lo + ny * far),
+        (sx + tx * hi + nx * far, sy + ty * hi + ny * far),
+        (sx + tx * hi + nx * near, sy + ty * hi + ny * near),
+        (sx + tx * lo + nx * near, sy + ty * lo + ny * near),
+    ]
+    zc = sum(p.z for p in group) / len(group)
+    h = cm(cfg.socket_height) / 2
+    solid = _prism(corners, level_plane(zc - h), level_plane(zc + h), occ)
+    return solid, (sx, sy), (nx, ny), near
+
+
+def fixtures(room: Room, ring, cfg: BuildSettings, occ,
+             overrides: dict | None = None) -> list[Fixture]:
+    """Every service fixture in the room, each carrying the point it came from."""
+    from .model import Role
+
+    overrides = overrides or {}
+    out: list[Fixture] = []
+
+    # Sockets first, in runs, so neighbours arrive as one outlet.
+    for group in _merge_sockets(room, ring, cfg):
+        mode = overrides.get(group[0].name, {}).get("mode", cfg.socket_mode)
         try:
-            if p.role is Role.SOCKET:
-                out.append(("socket", _socket_solid(p, ring, cfg, occ)))
-            elif p.role is Role.PLUMBING:
-                out.append(("pipe", _pipe_solid(p, ring, cfg)))
+            solid, seat, nrm, reach = _socket_run(group, ring, cfg, mode, occ)
         except (BuildError, RuntimeError):
-            continue          # a stray point off any wall is skipped, not fatal
+            continue
+        name = group[0].name if len(group) == 1 else \
+            f"{group[0].name}+{len(group) - 1}"
+        out.append(Fixture(name, "socket", mode, solid, seat, nrm, reach))
+
+    for p in room.points:
+        if p.role is not Role.PLUMBING:
+            continue
+        mode = overrides.get(p.name, {}).get("mode", cfg.pipe_mode)
+        try:
+            solid, seat, nrm, reach = _pipe_shape(p, ring, cfg, mode)
+        except (BuildError, RuntimeError):
+            continue
+        out.append(Fixture(p.name, "pipe", mode, solid, seat, nrm, reach))
     return out
 
 
-def _touches(a, b) -> bool:
-    """True when two solids actually share volume, not just proximity."""
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-    from OCP.BRepGProp import BRepGProp
-    from OCP.GProp import GProp_GProps
-
-    common = BRepAlgoAPI_Common(a, b)
-    common.Build()
-    if not common.IsDone():
-        return False
-    props = GProp_GProps()
-    BRepGProp.VolumeProperties_s(common.Shape(), props)
-    return props.Mass() > 1.0        # mm3
-
-
-def _add_fixtures(shape, room: Room, ring, cfg: BuildSettings, occ):
-    """Fuse sockets and pipe stubs onto the shell.
-
-    A fixture that misses the wall entirely would fuse into a floating body and
-    quietly turn one solid into several. Those are dropped and reported instead,
-    so the export is always a single watertight solid.
-    """
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
-    from .model import Role
+def _add_fixtures(shape, room: Room, ring, cfg: BuildSettings, occ,
+                  overrides: dict | None = None):
+    """Fuse or cut every fixture, and report any that would not attach."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 
     stray: list[str] = []
-    pts = [p for p in room.points if p.role in (Role.SOCKET, Role.PLUMBING)]
-    solids = fixture_solids(room, ring, cfg, occ)
-
-    for point, (_kind, solid) in zip(pts, solids):
-        if not _touches(shape, solid):
-            stray.append(point.name)
+    for f in fixtures(room, ring, cfg, occ, overrides):
+        op = BRepAlgoAPI_Cut if f.mode == "hole" else BRepAlgoAPI_Fuse
+        run = op(shape, f.solid)
+        run.Build()
+        if not run.IsDone():
+            stray.append(f.name)
             continue
-        fuse = BRepAlgoAPI_Fuse(shape, solid)
-        fuse.Build()
-        if fuse.IsDone():
-            shape = fuse.Shape()
-        else:
-            stray.append(point.name)
+        result = run.Shape()
+        if _solid_count(result) != 1:
+            stray.append(f.name)          # it detached; keep the body whole
+            continue
+        shape = result
     return shape, stray
+
+
+def _solid_count(shape) -> int:
+    from OCP.TopAbs import TopAbs_SOLID
+    from OCP.TopExp import TopExp_Explorer
+
+    exp, n = TopExp_Explorer(shape, TopAbs_SOLID), 0
+    while exp.More():
+        n += 1
+        exp.Next()
+    return n
+
+
+def wall_index_at(room: Room, x_m: float, y_m: float) -> int:
+    """Which outline edge a point in the plan belongs to.
+
+    Takes metres, because that is what the viewport reports for a picked face.
+    """
+    ring = [p.xy for p in room.outline]
+    if len(ring) < 2:
+        raise BuildError("room has no outline")
+    idx, _seat, _d = project_onto_edges((x_m * 100.0, y_m * 100.0), ring)
+    return idx
+
+
+def _outward(ring):
+    """A function giving the outward normal of any edge of the ring.
+
+    Taken from the ring's winding rather than by testing each corner. A test
+    per corner gets reflex corners backwards, and a room with a niche has
+    several of those.
+    """
+    from .geometry import signed_area
+    ccw = signed_area(list(ring)) > 0
+
+    def normal(a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = (dx * dx + dy * dy) ** 0.5 or 1.0
+        tx, ty = dx / L, dy / L
+        return ((ty, -tx) if ccw else (-ty, tx)), (tx, ty)
+
+    return normal
+
+
+def _mitre_vertex(ring, i: int, dist: float):
+    """The outer corner where two offset wall faces meet.
+
+    Solved as the intersection of the two offset edge lines, so neighbouring
+    walls share exactly this point and tile back into the room with no overlap
+    and no gap.
+    """
+    n = len(ring)
+    prev, here, nxt = ring[(i - 1) % n], ring[i], ring[(i + 1) % n]
+    normal = _outward(ring)
+    n1, t1 = normal(prev, here)
+    n2, t2 = normal(here, nxt)
+
+    p1 = (here[0] + n1[0] * dist, here[1] + n1[1] * dist)
+    p2 = (here[0] + n2[0] * dist, here[1] + n2[1] * dist)
+    denom = t1[0] * t2[1] - t1[1] * t2[0]
+    if abs(denom) < 1e-9:
+        return p1                      # the two walls run straight through
+    s_ = ((p2[0] - p1[0]) * t2[1] - (p2[1] - p1[1]) * t2[0]) / denom
+    return (p1[0] + t1[0] * s_, p1[1] + t1[1] * s_)
+
+
+def wall_body(room: Room, cfg: BuildSettings, edge: int,
+              fixture_overrides: dict | None = None):
+    """One wall of the room as its own usable solid.
+
+    A straight extrusion of the face, and nothing else. The footprint is the
+    surveyed wall line pushed back by the wall thickness, with square ends on
+    the two corner points. The result is the rectangular panel you were looking
+    at when you picked it, not a piece fanned out to fill the corners.
+
+    The corner blocks are therefore not part of any wall. That is deliberate:
+    a wall exported this way is a part with the dimensions it appears to have.
+
+    The wall arrives finished. Door and window openings are already cut through
+    it with their reveals, and the sockets and pipe stubs that belong to this
+    wall are fused onto it. Fixtures on the other walls are left behind.
+    """
+    from dataclasses import replace
+
+    ring = [p.xy for p in room.outline]
+    n = len(ring)
+    if not 0 <= edge < n:
+        raise BuildError(f"{room.name}: no wall {edge}")
+
+    occ = _occ()
+    a, b = ring[edge], ring[(edge + 1) % n]
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = (dx * dx + dy * dy) ** 0.5
+    if length < 1.0:
+        raise BuildError("wall has no length")
+
+    thickness = cm(room.wall_thickness if room.wall_thickness is not None
+                 else cfg.wall_thickness)
+
+    # Fixtures stand proud of the wall face, so they would be shaved off by a
+    # cut that stops at the surface. The shell is built bare and this wall's
+    # own fixtures are added back afterwards.
+    bare = build_room(room, replace(cfg, include_fixtures=False))
+    floor, ceiling = room_planes(room, cfg)
+
+    (nx, ny), _t = _outward(ring)(a, b)
+    footprint = [a, b,
+                 (b[0] + nx * thickness, b[1] + ny * thickness),
+                 (a[0] + nx * thickness, a[1] + ny * thickness)]
+    box = _prism(footprint, floor, ceiling, occ)
+
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
+    common = BRepAlgoAPI_Common(bare, box)
+    common.Build()
+    if not common.IsDone():
+        raise BuildError(f"{room.name}: could not separate wall {edge + 1}")
+    body = common.Shape()
+
+    if cfg.include_fixtures:
+        for f in fixtures(room, ring, cfg, occ, fixture_overrides):
+            idx, _seat, _d = project_onto_edges(f.seat, ring)
+            if idx != edge:
+                continue                      # belongs to another wall
+            op = BRepAlgoAPI_Cut if f.mode == "hole" else BRepAlgoAPI_Fuse
+            run = op(body, f.solid)
+            run.Build()
+            if run.IsDone():
+                body = run.Shape()
+
+    count = _solid_count(body)
+    if count == 0:
+        raise BuildError(f"{room.name}: wall {edge + 1} came out empty")
+    # More than one solid is a real outcome, not a fault: an opening at the end
+    # of a wall can leave the head and sill bands unconnected. STEP carries
+    # them as separate bodies, which is still a usable part.
+    if not occ["Check"](body).IsValid():
+        raise BuildError(f"{room.name}: wall {edge + 1} is not a valid solid")
+    return body, length, count

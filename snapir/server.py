@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
+import threading
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -18,10 +21,10 @@ from .model import Room
 from .parser import read_project, read_room
 from .settings import BuildSettings
 from .solid import BuildError, build_room, export_step, room_planes, solid_stats
-from .store import Store
+from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="0.1.0")
+app = FastAPI(title="Snapir Design X", version="1.0.0")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -55,12 +58,41 @@ def _apply_overrides(pid: str, room: Room) -> Room:
     if not ov:
         return room
     if ov.dropped_points:
-        room.outline = [p for p in room.outline if p.name not in ov.dropped_points]
+        # A deleted point leaves the room entirely, and every line that touched
+        # it goes with it. Nothing on disk is changed.
+        gone = set(ov.dropped_points)
+        room.points = [p for p in room.points if p.name not in gone]
+        room.segments = [s for s in room.segments
+                         if s[0] not in gone and s[1] not in gone]
+        from .parser import reread_topology
+        reread_topology(room)
+    if ov.added_segments or ov.removed_segments:
+        # Operator edits sit on top of the surveyed lines, and the room is
+        # re-read from the combined set so the outline follows.
+        gone = {tuple(sorted(x)) for x in ov.removed_segments}
+        segs = [s for s in room.segments if tuple(sorted(s)) not in gone]
+        segs += [tuple(x) for x in ov.added_segments]
+        room.segments = segs
+        from .parser import reread_topology
+        reread_topology(room)
+    if ov.role_overrides:
+        # A relabelled point changes what the room is, so everything derived
+        # from the old reading is worked out again.
+        from .parser import apply_roles
+        apply_roles(room, ov.role_overrides)
     if ov.outline_order:
-        rank = {n: i for i, n in enumerate(ov.outline_order)}
-        known = [p for p in room.outline if p.name in rank]
-        room.outline = sorted(known, key=lambda p: rank[p.name])
-        room.issues = [i for i in room.issues if i.code != "self-intersecting"]
+        # The operator can pull in any surveyed point, not just the ones the
+        # classifier called a floor corner. Their ring wins outright.
+        by_name = {p.name: p for p in room.points}
+        room.outline = [by_name[n] for n in ov.outline_order if n in by_name]
+        from .geometry import self_intersections
+        room.issues = [i for i in room.issues if i.code not in
+                       ("self-intersecting", "no-outline")]
+        if len(room.outline) >= 3 and self_intersections([p.xy for p in room.outline]):
+            from .model import Issue
+            room.issues.append(Issue(
+                "error", "self-intersecting",
+                "The ring you drew still crosses itself."))
     if ov.ceiling_height is not None:
         room.ceiling_height_override = ov.ceiling_height
         room.issues = [i for i in room.issues if i.code != "no-ceiling"]
@@ -81,7 +113,11 @@ def _room_json(room: Room, ov=None) -> dict:
         "outlineSource": room.outline_source,
         "area": round(area, 3),
         "ceilingHeight": round(room.ceiling_height(), 1) if room.ceiling_height() else None,
-        "outline": [{"name": p.name, "x": p.x, "y": p.y, "z": p.z} for p in room.outline],
+        "outline": [p.name for p in room.outline],
+        "floorZ": room.floor_z,
+        # Every line the surveyor drew, plus anything the operator added.
+        "segments": [list(s) for s in room.segments],
+        "links": [list(l) for l in room.links],
         "points": [{"name": p.name, "x": p.x, "y": p.y, "z": p.z,
                     "role": p.role.value, "layer": p.layer} for p in room.points],
         "openings": [{
@@ -107,7 +143,18 @@ class NewProject(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": app.version}
+    return {"ok": True, "version": app.version, "pid": os.getpid()}
+
+
+@app.post("/shutdown")
+def shutdown():
+    """Stand down so a newer instance can take the port.
+
+    Only ever called by the desktop app, which asks an orphaned backend to
+    exit before starting its own.
+    """
+    threading.Timer(0.25, lambda: os._exit(0)).start()
+    return {"ok": True}
 
 
 @app.get("/projects")
@@ -169,6 +216,11 @@ class RoomPatch(BaseModel):
     ceilingHeight: float | None = None
     wallThickness: float | None = None
     disabledOpenings: list[int] | None = None
+    fixtureOverrides: dict[str, dict] | None = None
+    roleOverrides: dict[str, str] | None = None
+    addedSegments: list[list[str]] | None = None
+    removedSegments: list[list[str]] | None = None
+    faceThickness: dict[str, float] | None = None
 
 
 @app.patch("/projects/{pid}/rooms/{name}")
@@ -184,6 +236,16 @@ def patch_room(pid: str, name: str, body: RoomPatch):
         ov.wall_thickness = body.wallThickness
     if body.disabledOpenings is not None:
         ov.disabled_openings = body.disabledOpenings
+    if body.fixtureOverrides is not None:
+        ov.fixture_overrides = body.fixtureOverrides
+    if body.roleOverrides is not None:
+        ov.role_overrides = {**ov.role_overrides, **body.roleOverrides}
+    if body.addedSegments is not None:
+        ov.added_segments = [list(x) for x in body.addedSegments]
+    if body.removedSegments is not None:
+        ov.removed_segments = [list(x) for x in body.removedSegments]
+    if body.faceThickness is not None:
+        ov.face_thickness = {**ov.face_thickness, **body.faceThickness}
     store.save()
     _rooms.pop(pid, None)                     # force a clean re-parse
     return _room_json(_room(pid, name), ov)
@@ -207,11 +269,46 @@ def patch_project(pid: str, body: ProjectPatch):
 
 # ---------------------------------------------------------------- build
 
+SETTINGS_PATH = app_dir() / "settings.json"
+
+
+def _global_settings() -> BuildSettings:
+    try:
+        cfg = BuildSettings.from_json(SETTINGS_PATH)
+    except (FileNotFoundError, TypeError, ValueError):
+        return BuildSettings()
+    # Settings written before the move to millimetres held centimetres.
+    if cfg.wall_thickness < 50.0:
+        for f in ("wall_thickness", "floor_thickness", "ceiling_thickness",
+                  "socket_width", "socket_height", "socket_proud",
+                  "socket_embed", "socket_recess", "pipe_diameter",
+                  "pipe_length", "pipe_min_length", "pipe_embed"):
+            setattr(cfg, f, getattr(cfg, f) * 10.0)
+        cfg.to_json(SETTINGS_PATH)
+    return cfg
+
+
 def _settings(pid: str) -> BuildSettings:
-    cfg = BuildSettings()
+    """Global settings, with the project's own thickness layered on top."""
+    cfg = _global_settings()
     t = store.get(pid).thickness
     cfg.wall_thickness = cfg.floor_thickness = cfg.ceiling_thickness = t
     return cfg
+
+
+@app.get("/settings")
+def get_settings():
+    return asdict(_global_settings())
+
+
+@app.patch("/settings")
+def patch_settings(body: dict):
+    cfg = _global_settings()
+    for k, v in body.items():
+        if hasattr(cfg, k):
+            setattr(cfg, k, v)
+    cfg.to_json(SETTINGS_PATH)
+    return asdict(cfg)
 
 
 @app.post("/projects/{pid}/rooms/{name}/build")
@@ -219,7 +316,9 @@ def build(pid: str, name: str):
     room = _room(pid, name)
     cfg = _settings(pid)
     try:
-        shape = _quiet(build_room, room, cfg)
+        ov = store.get(pid).overrides.get(name)
+        shape = _quiet(build_room, room, cfg,
+                       fixture_overrides=ov.fixture_overrides if ov else None)
         mesh = _quiet(tessellate, shape)
         stats = _quiet(solid_stats, shape)
         floor, ceiling = room_planes(room, cfg)
@@ -254,6 +353,43 @@ def export(pid: str, name: str):
     ov.built_at = _now()
     store.save()
     return {"path": str(path), "bytes": path.stat().st_size}
+
+
+@app.post("/projects/{pid}/rooms/{name}/export-wall")
+def export_wall(pid: str, name: str, faceId: int):
+    """Export the wall under a picked face as its own STEP body."""
+    from .solid import wall_body, wall_index_at
+
+    proj = store.get(pid)
+    room = _room(pid, name)
+    cfg = _settings(pid)
+    ov = store.get(pid).overrides.get(name)
+    fx = ov.fixture_overrides if ov else None
+
+    try:
+        shape = _quiet(build_room, room, cfg, fixture_overrides=fx)
+        mesh = _quiet(tessellate, shape)
+        face = next((f for f in mesh.faces if f.id == faceId), None)
+        if face is None:
+            raise HTTPException(404, f"No face {faceId}")
+        if face.role != "wall":
+            raise HTTPException(400, "That face is a floor or ceiling, not a wall.")
+
+        edge = wall_index_at(room, face.centroid[0], face.centroid[1])
+        body, length, pieces = _quiet(wall_body, room, cfg, edge, fx)
+        stats = _quiet(solid_stats, body)
+        out = Path(proj.folder) / "Snapir STEP" / "Walls"
+        path = _quiet(export_step, body,
+                      out / f"{name} - wall {edge + 1}.step", cfg.step_schema)
+    except BuildError as e:
+        raise HTTPException(422, str(e))
+
+    return {
+        "path": str(path), "bytes": path.stat().st_size,
+        "wall": edge + 1, "length": round(length, 1), "pieces": pieces,
+        "stats": {k: (round(v, 6) if isinstance(v, float) else v)
+                  for k, v in stats.items()},
+    }
 
 
 @app.post("/projects/{pid}/rooms/{name}/export-designx")

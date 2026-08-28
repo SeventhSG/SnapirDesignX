@@ -1,4 +1,9 @@
-"""Job settings. Everything the survey cannot tell us lives here."""
+"""Job settings. Everything the survey cannot tell us lives here.
+
+Every length here is in millimetres, the same unit the STEP files are
+written in. The survey itself arrives in centimetres; the conversion
+happens once, where the geometry is built.
+"""
 from __future__ import annotations
 
 import json
@@ -10,32 +15,44 @@ from pathlib import Path
 class BuildSettings:
     # Shell dimensions, centimetres. The surveyed surface is always the INNER
     # face, so every offset grows outward and never disturbs the measurement.
-    wall_thickness: float = 20.0
-    floor_thickness: float = 20.0
-    ceiling_thickness: float = 20.0
+    wall_thickness: float = 200.0
+    floor_thickness: float = 200.0
+    ceiling_thickness: float = 200.0
 
     # Ceiling handling
     fit_ceiling_plane: bool = True       # False levels it at the mean height
-    max_ceiling_tilt_deg: float = 3.0    # beyond this, level it and flag
+    max_ceiling_tilt_deg: float = 3.0    # degrees
+    sockets_merge_gap: float = 5.0       # mm; closer than this, sockets join
 
     # Openings
     cut_openings: bool = True
     confirm_openings_per_room: bool = True
-    door_sill_max: float = 20.0          # sill at or under this reads as a door
+    door_sill_max: float = 80.0          # sill at or under this reads as a door
 
     # Fixtures. Single surveyed points on the Kontak and Su tesisat layers are
-    # real building services, so they are built as real geometry rather than
-    # dropped: a socket becomes a back box on the wall face, a plumbing point
-    # becomes a pipe stub coming out of the wall.
+    # real building services, so they become real geometry. Every fixture is
+    # anchored to the wall it belongs to, never left floating.
     include_fixtures: bool = True
-    socket_width: float = 8.0        # cm, along the wall
-    socket_height: float = 8.0       # cm
-    socket_depth: float = 2.5        # cm, proud of the inner face
-    pipe_diameter: float = 2.5       # cm
-    pipe_length: float = 6.0         # cm, proud of the inner face
+
+    # "box" adds a back box standing proud of the wall.
+    # "hole" cuts a recess into the wall instead.
+    socket_mode: str = "box"
+    socket_width: float = 80.0       # mm, along the wall
+    socket_height: float = 80.0      # mm
+    socket_proud: float = 12.0       # mm the box stands out from the inner face
+    socket_embed: float = 50.0       # mm the box reaches into the wall
+    socket_recess: float = 50.0      # mm deep when the mode is "hole"
+
+    # "stub" adds a pipe coming out of the wall, reaching the surveyed point.
+    # "hole" cuts a sleeve through the wall instead.
+    pipe_mode: str = "stub"
+    pipe_diameter: float = 25.0      # mm
+    pipe_length: float = 0.0         # 0 means reach the surveyed point
+    pipe_min_length: float = 40.0    # mm, floor for a point shot on the wall
+    pipe_embed: float = 50.0         # mm the stub reaches into the wall
 
     # Export
-    export_units: str = "mm"             # STEP is written in millimetres
+    units: str = "mm"                    # every length above, and STEP
     step_schema: str = "AP214"
     output_dir: str = "out"
 

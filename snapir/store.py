@@ -30,6 +30,10 @@ class RoomOverride:
     wall_thickness: float | None = None          # whole-room override
     face_thickness: dict[str, float] = field(default_factory=dict)  # edge -> cm
     disabled_openings: list[int] = field(default_factory=list)
+    fixture_overrides: dict[str, dict] = field(default_factory=dict)
+    role_overrides: dict[str, str] = field(default_factory=dict)  # point -> role
+    added_segments: list[list[str]] = field(default_factory=list)
+    removed_segments: list[list[str]] = field(default_factory=list)
     added_openings: list[dict] = field(default_factory=list)
     built_at: str | None = None
     step_path: str | None = None
@@ -42,7 +46,7 @@ class ProjectRecord:
     folder: str
     created_at: str
     opened_at: str
-    thickness: float = 20.0
+    thickness: float = 200.0   # mm
     overrides: dict[str, RoomOverride] = field(default_factory=dict)
 
     def touch(self) -> None:
@@ -64,6 +68,10 @@ class Store:
             return
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         for pid, p in raw.get("projects", {}).items():
+            # Thicknesses used to be stored in centimetres. Anything that small
+            # is an old file, not a 2 cm wall.
+            if p.get("thickness", 200.0) < 50.0:
+                p["thickness"] = p.get("thickness", 20.0) * 10.0
             ov = {k: RoomOverride(**v) for k, v in p.pop("overrides", {}).items()}
             self.projects[pid] = ProjectRecord(**p, overrides=ov)
 
