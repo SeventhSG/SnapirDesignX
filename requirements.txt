@@ -1,0 +1,7 @@
+# Parser and geometry: standard library only.
+
+# Solid modelling and STEP export
+cadquery-ocp>=7.7
+
+# Desktop shell
+PySide6>=6.6

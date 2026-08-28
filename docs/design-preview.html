@@ -1,0 +1,709 @@
+<title>Snapir Design X</title>
+<style>
+:root{
+  --paper:#F6F6F3; --panel:#FFFFFF; --sunk:#F1F1ED; --rail:#FBFBF9;
+  --line:#E6E5DF; --line-2:#D3D2CA; --line-3:#B8B7AE;
+  --ink:#26262A; --ink-2:#5A5A61; --ink-3:#7C7B82;
+  --gold:#A87A26; --gold-2:#C99B3F; --gold-ink:#7A5716;
+  --gold-wash:#FAF3E4; --gold-line:#E4CE9C; --on-gold:#FFFFFF;
+  --ok:#3B7455; --ok-wash:#EAF1EC;
+  --warn:#A34A28; --warn-wash:#FAEDE7;
+  --vp-a:#EFEFEA; --vp-b:#DBDBD3;
+  --mass:#CFCEC6; --mass-2:#BEBDB4; --mass-3:#9E9D95;
+  --sh-1:0 1px 1px rgba(38,38,42,.04);
+  --sh-2:0 1px 2px rgba(38,38,42,.05), 0 14px 34px -18px rgba(38,38,42,.24);
+  --ui:"SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+  --mono:"SF Mono","Cascadia Mono",ui-monospace,Consolas,monospace;
+  --ease:cubic-bezier(.22,1,.36,1);
+  --fast:130ms; --base:190ms;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#151517; --panel:#1D1D20; --sunk:#0F0F11; --rail:#191A1C;
+  --line:#2B2B30; --line-2:#3A3A41; --line-3:#55555E;
+  --ink:#F1F0EB; --ink-2:#A8A7A1; --ink-3:#8B8A91;
+  --gold:#D2A24E; --gold-2:#E0B96F; --gold-ink:#E7C480;
+  --gold-wash:#2C2314; --gold-line:#5A4720; --on-gold:#1A1408;
+  --ok:#71A98C; --ok-wash:#18251E;
+  --warn:#D0805A; --warn-wash:#2B1B13;
+  --vp-a:#1F1F23; --vp-b:#121214;
+  --mass:#3B3B41; --mass-2:#4A4A52; --mass-3:#616169;
+  --sh-1:0 1px 1px rgba(0,0,0,.3);
+  --sh-2:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -18px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  --paper:#151517; --panel:#1D1D20; --sunk:#0F0F11; --rail:#191A1C;
+  --line:#2B2B30; --line-2:#3A3A41; --line-3:#55555E;
+  --ink:#F1F0EB; --ink-2:#A8A7A1; --ink-3:#8B8A91;
+  --gold:#D2A24E; --gold-2:#E0B96F; --gold-ink:#E7C480;
+  --gold-wash:#2C2314; --gold-line:#5A4720; --on-gold:#1A1408;
+  --ok:#71A98C; --ok-wash:#18251E;
+  --warn:#D0805A; --warn-wash:#2B1B13;
+  --vp-a:#1F1F23; --vp-b:#121214;
+  --mass:#3B3B41; --mass-2:#4A4A52; --mass-3:#616169;
+  --sh-1:0 1px 1px rgba(0,0,0,.3);
+  --sh-2:0 1px 2px rgba(0,0,0,.4), 0 14px 34px -18px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--ui);
+  font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  font-feature-settings:"ss01","cv01"}
+h1,h2,h3,h4{margin:0;letter-spacing:-.015em;text-wrap:balance}
+p{margin:0}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.wrap{max-width:1180px;margin:0 auto;padding:44px 24px 88px;
+  display:flex;flex-direction:column;gap:40px}
+
+/* ---------- masthead ---------- */
+.top{display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}
+.brand .mk{width:38px;height:38px;color:var(--ink);flex:none}
+.brand h1{font-size:1.0625rem;font-weight:600;letter-spacing:.02em;line-height:1.2}
+.brand span{display:block;font-size:.8125rem;font-weight:450;color:var(--ink-3);
+  letter-spacing:.09em;text-transform:uppercase}
+.top .lede{flex:1 1 340px;color:var(--ink-2);font-size:.9375rem;max-width:60ch}
+.lang{display:inline-flex;padding:2px;background:var(--sunk);border:1px solid var(--line);
+  border-radius:9px;gap:2px;flex:none}
+.lang button{appearance:none;border:0;background:transparent;color:var(--ink-2);
+  font-family:var(--ui);font-size:.75rem;font-weight:600;letter-spacing:.04em;
+  padding:6px 12px;border-radius:7px;cursor:pointer;
+  transition:color var(--fast) var(--ease), background var(--fast) var(--ease)}
+.lang button:hover{color:var(--ink)}
+.lang button[aria-pressed="true"]{background:var(--panel);color:var(--ink);
+  box-shadow:var(--sh-1)}
+.lang button:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+
+/* ---------- screen switcher ---------- */
+.tabs{display:flex;gap:2px;padding:3px;background:var(--sunk);
+  border:1px solid var(--line);border-radius:11px;align-self:flex-start;
+  overflow-x:auto;max-width:100%}
+.tabs button{appearance:none;border:0;background:transparent;color:var(--ink-2);
+  font-family:var(--ui);font-size:.8125rem;font-weight:550;white-space:nowrap;
+  padding:8px 15px;border-radius:8px;cursor:pointer;
+  transition:color var(--fast) var(--ease), background var(--fast) var(--ease)}
+.tabs button:hover{color:var(--ink);background:color-mix(in srgb,var(--panel) 60%,transparent)}
+.tabs button[aria-selected="true"]{background:var(--panel);color:var(--ink);box-shadow:var(--sh-1)}
+.tabs button:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+
+/* ---------- window chrome ---------- */
+.win{background:var(--panel);border:1px solid var(--line-2);border-radius:13px;
+  box-shadow:var(--sh-2);overflow:hidden}
+.bar{height:40px;display:flex;align-items:center;gap:11px;padding:0 15px;
+  border-bottom:1px solid var(--line);background:var(--rail)}
+.bar .mk{width:15px;height:15px;color:var(--ink-3);flex:none}
+.bar b{font-size:.8125rem;font-weight:600;letter-spacing:-.005em}
+.bar .num{margin-left:auto;font-size:.6875rem;color:var(--ink-3)}
+.pane{display:none}
+.pane.on{display:block;animation:rise var(--base) var(--ease) both}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ---------- launch ---------- */
+.launch{height:330px;display:grid;place-items:center;background:var(--panel)}
+.launch .in{display:flex;flex-direction:column;align-items:center;gap:22px}
+.launch .mk{width:66px;height:66px;color:var(--ink)}
+.launch h2{font-size:1.0625rem;font-weight:600;letter-spacing:.16em;
+  text-transform:uppercase;text-align:center}
+.launch h2 em{display:block;font-style:normal;font-size:.75rem;font-weight:500;
+  letter-spacing:.26em;color:var(--ink-3);margin-top:6px}
+.track{width:168px;height:2px;background:var(--line-2);border-radius:2px;overflow:hidden}
+.track i{display:block;height:100%;width:38%;background:var(--gold);border-radius:2px;
+  animation:load 2.4s var(--ease) infinite}
+@keyframes load{0%{transform:translateX(-100%)}100%{transform:translateX(264%)}}
+.launch small{font-family:var(--mono);font-size:.6875rem;color:var(--ink-3);letter-spacing:.02em}
+
+/* ---------- shared screen body ---------- */
+.body{padding:22px 24px 26px;display:flex;flex-direction:column;gap:18px}
+.head{display:flex;align-items:center;gap:12px}
+.head h3{font-size:1.0625rem;font-weight:600}
+.head .num{font-size:.75rem;color:var(--ink-3)}
+.head .sp{margin-left:auto;display:flex;gap:8px}
+.btn{appearance:none;border:1px solid transparent;border-radius:8px;padding:8px 15px;
+  font-family:var(--ui);font-size:.8125rem;font-weight:600;cursor:pointer;
+  background:var(--gold);color:var(--on-gold);
+  transition:background var(--fast) var(--ease), transform 90ms var(--ease)}
+.btn:hover{background:var(--gold-2)}
+.btn:active{transform:scale(.985)}
+.btn:focus-visible{outline:2px solid var(--gold-ink);outline-offset:2px}
+.btn.q{background:transparent;color:var(--ink-2);border-color:var(--line-2)}
+.btn.q:hover{background:var(--sunk);color:var(--ink)}
+
+/* ---------- list ---------- */
+.list{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
+.lrow{display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center;
+  padding:14px 16px;border-bottom:1px solid var(--line);cursor:pointer;
+  position:relative;transition:background var(--fast) var(--ease)}
+.lrow:last-child{border-bottom:0}
+.lrow:hover{background:var(--sunk)}
+.lrow[aria-current="true"]{background:var(--gold-wash)}
+.lrow[aria-current="true"]::before{content:"";position:absolute;left:0;top:0;bottom:0;
+  width:2px;background:var(--gold)}
+.lrow .nm{display:flex;flex-direction:column;gap:3px;min-width:0}
+.lrow b{font-size:.9375rem;font-weight:550;letter-spacing:-.008em}
+.lrow .path{font-family:var(--mono);font-size:.6875rem;color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta{display:flex;gap:22px;align-items:baseline}
+.meta div{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.meta .num{font-size:.8125rem;color:var(--ink)}
+.meta span{font-size:.625rem;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase}
+
+/* ---------- room table ---------- */
+.tbl{width:100%;border-collapse:collapse;font-size:.875rem}
+.tbl thead th{text-align:left;font-size:.625rem;font-weight:650;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-3);padding:0 12px 9px;border-bottom:1px solid var(--line)}
+.tbl thead th.r{text-align:right}
+.tbl tbody tr{border-bottom:1px solid var(--line);cursor:pointer;
+  transition:background var(--fast) var(--ease)}
+.tbl tbody tr:last-child{border-bottom:0}
+.tbl tbody tr:hover{background:var(--sunk)}
+.tbl tbody tr.sel{background:var(--gold-wash)}
+.tbl td{padding:11px 12px;vertical-align:middle}
+.tbl td.r{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:.8125rem;color:var(--ink-2)}
+.tbl td b{font-weight:550;letter-spacing:-.008em}
+.tbl td small{display:block;font-size:.75rem;color:var(--warn);margin-top:3px;line-height:1.4}
+.tag{display:inline-flex;align-items:center;gap:6px;font-size:.6875rem;font-weight:600;
+  padding:3px 9px;border-radius:6px;letter-spacing:.01em;white-space:nowrap}
+.tag i{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
+.t-ok{background:var(--ok-wash);color:var(--ok)}
+.t-warn{background:var(--warn-wash);color:var(--warn)}
+.t-done{background:var(--gold);color:var(--on-gold)}
+.t-done i{background:currentColor}
+
+/* ---------- workspace ---------- */
+.ws{display:grid;grid-template-columns:1fr 276px}
+@media (max-width:800px){.ws{grid-template-columns:1fr}}
+.vp{position:relative;min-height:400px;display:grid;place-items:center;padding:16px;
+  border-right:1px solid var(--line);
+  background:radial-gradient(120% 100% at 50% 0%,var(--vp-a) 0%,var(--vp-b) 100%)}
+.vp svg{width:100%;height:auto;max-height:400px;display:block}
+.vp svg polygon{transition:fill 160ms var(--ease)}
+.vp svg polygon.pick{cursor:pointer}
+.vp svg polygon.pick:hover{fill:var(--gold-2)}
+.hint{position:absolute;left:18px;top:15px;font-family:var(--mono);font-size:.6875rem;
+  color:var(--ink-3);letter-spacing:.04em}
+.tools{position:absolute;left:18px;bottom:15px;display:flex;gap:2px;padding:3px;
+  background:var(--panel);border:1px solid var(--line-2);border-radius:9px;box-shadow:var(--sh-1)}
+.tools button{appearance:none;border:0;background:transparent;color:var(--ink-2);
+  font-family:var(--ui);font-size:.75rem;font-weight:550;padding:5px 11px;border-radius:7px;
+  cursor:pointer;transition:background var(--fast) var(--ease),color var(--fast) var(--ease)}
+.tools button:hover{color:var(--ink);background:var(--sunk)}
+.tools button[aria-pressed="true"]{background:var(--gold);color:var(--on-gold)}
+.tools button:focus-visible{outline:2px solid var(--gold-ink);outline-offset:1px}
+.insp{padding:18px;display:flex;flex-direction:column;gap:18px;background:var(--rail)}
+.insp h4{font-size:.625rem;font-weight:650;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:.8125rem;margin:0}
+.kv dt{color:var(--ink-2)}
+.kv dd{margin:0;text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:.75rem;color:var(--ink)}
+.stack{display:flex;flex-direction:column;gap:9px}
+.fld{display:flex;flex-direction:column;gap:6px}
+.fld label{font-size:.75rem;color:var(--ink-2)}
+.inp{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:8px;
+  background:var(--panel);border:1px solid var(--line-2);
+  transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease)}
+.inp:hover{border-color:var(--line-3)}
+.inp.on{border-color:var(--gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--gold) 15%,transparent)}
+.inp .num{flex:1;font-size:.875rem}
+.inp em{font-style:normal;font-size:.6875rem;color:var(--ink-3)}
+.said{font-size:.75rem;color:var(--ink-2);line-height:1.55;
+  border-top:1px solid var(--line);padding-top:13px}
+.said b{color:var(--gold-ink);font-weight:600}
+
+/* ---------- settings ---------- */
+.set{display:grid;grid-template-columns:180px 1fr;min-height:400px}
+@media (max-width:800px){.set{grid-template-columns:1fr}}
+.snav{border-right:1px solid var(--line);background:var(--rail);padding:14px 10px;
+  display:flex;flex-direction:column;gap:1px}
+@media (max-width:800px){.snav{flex-direction:row;overflow-x:auto;border-right:0;
+  border-bottom:1px solid var(--line)}}
+.snav button{appearance:none;border:0;background:transparent;text-align:left;
+  font-family:var(--ui);font-size:.8125rem;font-weight:500;color:var(--ink-2);
+  padding:8px 11px;border-radius:7px;cursor:pointer;white-space:nowrap;
+  transition:background var(--fast) var(--ease),color var(--fast) var(--ease)}
+.snav button:hover{background:var(--sunk);color:var(--ink)}
+.snav button[aria-current="true"]{background:var(--gold-wash);color:var(--gold-ink);font-weight:600}
+.snav button:focus-visible{outline:2px solid var(--gold);outline-offset:-1px}
+.sbody{padding:20px 24px;display:flex;flex-direction:column;gap:4px}
+.srow{display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center;
+  padding:14px 0;border-bottom:1px solid var(--line)}
+.srow:last-child{border-bottom:0}
+.srow .t{display:flex;flex-direction:column;gap:3px}
+.srow b{font-size:.875rem;font-weight:550}
+.srow p{font-size:.75rem;color:var(--ink-3);max-width:52ch;line-height:1.5}
+.stepper{display:flex;align-items:center;gap:0;border:1px solid var(--line-2);
+  border-radius:8px;overflow:hidden;background:var(--panel)}
+.stepper button{appearance:none;border:0;background:transparent;color:var(--ink-2);
+  width:30px;height:32px;cursor:pointer;font-size:.9375rem;line-height:1;
+  transition:background var(--fast) var(--ease),color var(--fast) var(--ease)}
+.stepper button:hover{background:var(--sunk);color:var(--ink)}
+.stepper button:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+.stepper .num{width:56px;text-align:center;font-size:.8125rem;
+  border-left:1px solid var(--line);border-right:1px solid var(--line);line-height:32px}
+.sw{appearance:none;border:0;width:42px;height:25px;border-radius:999px;cursor:pointer;
+  background:var(--line-2);position:relative;flex:none;
+  transition:background var(--base) var(--ease)}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:19px;height:19px;
+  border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);
+  transition:transform var(--base) var(--ease)}
+.sw[aria-checked="true"]{background:var(--gold)}
+.sw[aria-checked="true"]::after{transform:translateX(17px)}
+.sw:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+/* ---------- notes ---------- */
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:22px;
+  border-top:1px solid var(--line);padding-top:28px}
+.notes section{display:flex;flex-direction:column;gap:7px}
+.notes h3{font-size:.9375rem;font-weight:600}
+.notes p{font-size:.875rem;color:var(--ink-2);line-height:1.6}
+.notes code{font-family:var(--mono);font-size:.8125rem;color:var(--gold-ink)}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:3px}
+.chip{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:.6875rem;
+  color:var(--ink-2);border:1px solid var(--line);border-radius:7px;padding:4px 8px}
+.chip i{width:11px;height:11px;border-radius:3px;display:block;
+  border:1px solid rgba(38,38,42,.12)}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-duration:1ms!important;animation-duration:1ms!important;
+    animation-iteration-count:1!important}
+  .pane.on{animation:fade 1ms both}
+  @keyframes fade{to{opacity:1}}
+  .track i{width:100%;animation:none}
+}
+</style>
+
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <svg class="mk" viewBox="0 0 100 100" aria-hidden="true"><use href="#mk"/></svg>
+      <div><h1>Snapir</h1><span>Design X</span></div>
+    </div>
+    <p class="lede" data-i="lede">Interface direction for the desktop app. The mark is the real
+      logo, vectorised. Gold does one job: what you selected, and what happens next.</p>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-lang="en" aria-pressed="true">EN</button>
+      <button type="button" data-lang="tr" aria-pressed="false">TR</button>
+    </div>
+  </header>
+
+  <div class="tabs" role="tablist" aria-label="Screens">
+    <button role="tab" aria-selected="true"  data-pane="launch"    data-i="s1">Launch</button>
+    <button role="tab" aria-selected="false" data-pane="projects" data-i="s2">Projects</button>
+    <button role="tab" aria-selected="false" data-pane="rooms"    data-i="s3">Rooms</button>
+    <button role="tab" aria-selected="false" data-pane="work"     data-i="s4">Workspace</button>
+    <button role="tab" aria-selected="false" data-pane="settings" data-i="s5">Settings</button>
+  </div>
+
+  <div class="win">
+
+    <!-- LAUNCH -->
+    <div class="pane on" id="launch">
+      <div class="bar"><svg class="mk" viewBox="0 0 100 100" aria-hidden="true"><use href="#mk"/></svg>
+        <b>Snapir Design X</b><span class="num">0.1.0</span></div>
+      <div class="launch"><div class="in">
+        <svg class="mk" viewBox="0 0 100 100" aria-hidden="true"><use href="#mk"/></svg>
+        <h2>Snapir<em>Design X</em></h2>
+        <div class="track"><i></i></div>
+        <small data-i="boot">Starting geometry kernel</small>
+      </div></div>
+    </div>
+
+    <!-- PROJECTS -->
+    <div class="pane" id="projects">
+      <div class="bar"><svg class="mk" viewBox="0 0 100 100" aria-hidden="true"><use href="#mk"/></svg>
+        <b data-i="s2">Projects</b><span class="num">3</span></div>
+      <div class="body">
+        <div class="head"><h3 data-i="recent">Recent</h3>
+          <div class="sp"><button class="btn q" data-i="open">Open folder</button>
+            <button class="btn" data-i="newp">New project</button></div></div>
+        <div class="list">
+          <div class="lrow" aria-current="true" tabindex="0">
+            <div class="nm"><b>PB Mustafa</b>
+              <span class="path">C:\Surveys\PB Mustafa</span></div>
+            <div class="meta">
+              <div><span class="num">28</span><span data-i="mRooms">rooms</span></div>
+              <div><span class="num">22</span><span data-i="mReady">ready</span></div>
+              <div><span class="num">6</span><span data-i="mNeeds">needs you</span></div>
+            </div>
+          </div>
+          <div class="lrow" tabindex="0">
+            <div class="nm"><b>Kadıköy Blok C</b>
+              <span class="path">D:\Surveys\Kadikoy Blok C</span></div>
+            <div class="meta">
+              <div><span class="num">41</span><span data-i="mRooms">rooms</span></div>
+              <div><span class="num">41</span><span data-i="mReady">ready</span></div>
+              <div><span class="num">0</span><span data-i="mNeeds">needs you</span></div>
+            </div>
+          </div>
+          <div class="lrow" tabindex="0">
+            <div class="nm"><b>Ataşehir 12–14</b>
+              <span class="path">D:\Surveys\Atasehir 12-14</span></div>
+            <div class="meta">
+              <div><span class="num">17</span><span data-i="mRooms">rooms</span></div>
+              <div><span class="num">17</span><span data-i="mBuilt">built</span></div>
+              <div><span class="num">0</span><span data-i="mNeeds">needs you</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROOMS -->
+    <div class="pane" id="rooms">
+      <div class="bar"><svg class="mk" viewBox="0 0 100 100" aria-hidden="true"><use href="#mk"/></svg>
+        <b>PB Mustafa</b><span class="num">28 · 20 cm</span></div>
+      <div class="body">
+        <div class="head"><h3>Daire 53</h3><span class="num">6</span>
+          <div class="sp"><button class="btn q" data-i="job">Job settings</button>
+            <button class="btn" data-i="buildAll">Build 5 ready</button></div></div>
+        <table class="tbl">
+          <thead><tr>
+            <th data-i="hRoom">Room</th><th data-i="hStatus">Status</th>
+            <th class="r" data-i="hArea">Area</th><th class="r" data-i="hCeil">Ceiling</th>
+            <th class="r" data-i="hOpen">Openings</th><th class="r" data-i="hFix">Fixtures</th>
+          </tr></thead>
+          <tbody>
+            <tr class="sel"><td><b>Salon</b></td>
+              <td><span class="tag t-done"><i></i><span data-i="built">Built</span></span></td>
+              <td class="r">23.41 m²</td><td class="r">272.1</td><td class="r">3</td><td class="r">24</td></tr>
+            <tr><td><b>Oda</b></td>
+              <td><span class="tag t-ok"><i></i><span data-i="ready">Ready</span></span></td>
+              <td class="r">16.29 m²</td><td class="r">270.4</td><td class="r">2</td><td class="r">11</td></tr>
+            <tr><td><b>Ebeveyn odası</b></td>
+              <td><span class="tag t-ok"><i></i><span data-i="ready">Ready</span></span></td>
+              <td class="r">13.00 m²</td><td class="r">273.2</td><td class="r">2</td><td class="r">9</td></tr>
+            <tr><td><b>Koridor</b>
+                <small data-i="askCeil">No ceiling was measured here. Enter a height and it builds.</small></td>
+              <td><span class="tag t-warn"><i></i><span data-i="needs">Needs you</span></span></td>
+              <td class="r">6.68 m²</td><td class="r">—</td><td class="r">0</td><td class="r">2</td></tr>
+            <tr><td><b>Banyo</b></td>
+              <td><span class="tag t-ok"><i></i><span data-i="ready">Ready</span></span></td>
+              <td class="r">3.27 m²</td><td class="r">248.3</td><td class="r">1</td><td class="r">7</td></tr>
+            <tr><td><b>Ebeveyn banyo</b></td>
+              <td><span class="tag t-ok"><i></i><span data-i="ready">Ready</span></span></td>
+              <td class="r">3.03 m²</td><td class="r">251.4</td><td class="r">1</td><td class="r">6</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- WORKSPACE -->
+    <div class="pane" id="work">
+      <div class="bar"><svg class="mk" viewBox="0 0 100 100" aria-hidden="true"><use href="#mk"/></svg>
+        <b>Daire 53 · Salon</b><span class="num">121 faces · 1 solid</span></div>
+      <div class="ws">
+        <div class="vp">
+          <span class="hint" data-i="hint">CLICK A FACE</span>
+          <svg id="iso" viewBox="0 0 660 420" role="img"
+               aria-label="Isometric view of the Salon room shell"></svg>
+          <div class="tools" role="group">
+            <button type="button" aria-pressed="true"  data-i="tFace">Face</button>
+            <button type="button" aria-pressed="false" data-i="tEdge">Edge</button>
+            <button type="button" aria-pressed="false" data-i="tOpen">Opening</button>
+            <button type="button" aria-pressed="false" data-i="tFix">Fixture</button>
+          </div>
+        </div>
+        <aside class="insp">
+          <div class="stack"><h4 data-i="iSel">Selection</h4>
+            <dl class="kv">
+              <dt data-i="iType">Type</dt><dd id="selType">Wall face</dd>
+              <dt data-i="iArea">Area</dt><dd id="selArea">10.72 m²</dd>
+              <dt data-i="iLen">Length</dt><dd id="selLen">394.1 cm</dd>
+            </dl></div>
+          <div class="fld"><label for="thick" data-i="iThick">Thickness for this wall</label>
+            <div class="inp on" id="thick"><span class="num">24</span>
+              <em data-i="iDefault">cm · job default 20</em></div></div>
+          <div class="stack"><h4 data-i="iRoom">Room</h4>
+            <dl class="kv">
+              <dt data-i="iFloor">Floor plane</dt><dd>0.000° · 0.00</dd>
+              <dt data-i="iCeil">Ceiling plane</dt><dd>0.301° · 0.21</dd>
+              <dt data-i="iH">Height</dt><dd>272.1 cm</dd>
+              <dt data-i="iVol">Volume</dt><dd>17.747 m³</dd>
+              <dt data-i="iSock">Sockets</dt><dd>19</dd>
+              <dt data-i="iPipe">Plumbing</dt><dd>5</dd>
+            </dl></div>
+          <p class="said" data-i="iNote">The ceiling reads 269.77 to 273.99 across its corners.
+            Snapir fits <b>one true plane</b> through them instead of averaging.</p>
+        </aside>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="pane" id="settings">
+      <div class="bar"><svg class="mk" viewBox="0 0 100 100" aria-hidden="true"><use href="#mk"/></svg>
+        <b data-i="s5">Settings</b></div>
+      <div class="set">
+        <nav class="snav">
+          <button type="button" aria-current="true" data-i="nBuild">Build</button>
+          <button type="button" data-i="nFix">Fixtures</button>
+          <button type="button" data-i="nExport">Export</button>
+          <button type="button" data-i="nLang">Language</button>
+          <button type="button" data-i="nAbout">About</button>
+        </nav>
+        <div class="sbody">
+          <div class="srow"><div class="t"><b data-i="cWall">Wall thickness</b>
+            <p data-i="cWallP">Applied to every room in the job. Any single wall can be
+              overridden by clicking it in the workspace.</p></div>
+            <div class="stepper"><button type="button" aria-label="Decrease">−</button>
+              <span class="num">20</span><button type="button" aria-label="Increase">+</button></div></div>
+          <div class="srow"><div class="t"><b data-i="cSlab">Floor and ceiling slabs</b>
+            <p data-i="cSlabP">Thickness of the slabs above and below the room.</p></div>
+            <div class="stepper"><button type="button" aria-label="Decrease">−</button>
+              <span class="num">20</span><button type="button" aria-label="Increase">+</button></div></div>
+          <div class="srow"><div class="t"><b data-i="cFit">Fit ceiling planes</b>
+            <p data-i="cFitP">Fit one plane through the measured ceiling corners rather than
+              levelling them at the average height.</p></div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="Fit ceiling planes"></button></div>
+          <div class="srow"><div class="t"><b data-i="cCut">Cut openings</b>
+            <p data-i="cCutP">Doors and windows are cut through the wall. Each room is confirmed
+              before the cut runs.</p></div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="Cut openings"></button></div>
+          <div class="srow"><div class="t"><b data-i="cFix">Build service fixtures</b>
+            <p data-i="cFixP">Sockets become back boxes on the wall face, plumbing points become
+              pipe stubs coming out of the wall.</p></div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="Build service fixtures"></button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <section><h3 data-i="n1h">Gold means one thing</h3>
+      <p data-i="n1p">Selected, primary, or built. Nothing is gold for decoration, so the eye
+        always knows where it is.</p>
+      <div class="chips">
+        <span class="chip"><i style="background:#26262A"></i>26262A</span>
+        <span class="chip"><i style="background:#A87A26"></i>A87A26</span>
+        <span class="chip"><i style="background:#F6F6F3"></i>F6F6F3</span>
+      </div></section>
+    <section><h3 data-i="n2h">Native type, not web type</h3>
+      <p data-i="n2p">The interface uses the platform's own face, so it reads as a Windows
+        application rather than a page. Every measurement is set in
+        <code>tabular-nums</code> so digits line up down a column.</p></section>
+    <section><h3 data-i="n3h">Motion you don't notice</h3>
+      <p data-i="n3p">Hover and selection settle in 130 ms, screens in 190 ms, all on one
+        easing curve. Nothing pulses, nothing bounces, and every transition has a
+        reduced-motion path.</p></section>
+    <section><h3 data-i="n4h">It asks, it never guesses</h3>
+      <p data-i="n4p">Where the survey is ambiguous the room states what is missing in one
+        sentence. It will not invent a corner or a ceiling height.</p></section>
+  </div>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<path id="mk" fill-rule="evenodd" d="M27.48 17.73 L27.48 27.84 L12.77 42.73 L47.52 42.73 L67.38 22.87 L67.38 22.16 L72.52 17.73 L100.00 44.86 L100.00 82.45 L92.55 82.45 L92.55 47.16 L72.52 27.84 L53.19 47.16 L53.19 82.45 L45.74 82.45 L45.74 50.53 L7.45 50.53 L7.45 82.45 L0.00 82.45 L0.00 44.86Z"/>
+</defs></svg>
+
+<script>
+/* ---------------- language ---------------- */
+const TR = {
+  lede:"Masaüstü uygulamasının arayüz yönü. İşaret, vektöre çevrilmiş gerçek logo. Altın tek bir iş yapar: neyi seçtiğin ve sırada ne olduğu.",
+  s1:"Açılış", s2:"Projeler", s3:"Odalar", s4:"Çalışma alanı", s5:"Ayarlar",
+  boot:"Geometri çekirdeği başlatılıyor",
+  recent:"Son kullanılanlar", open:"Klasör aç", newp:"Yeni proje",
+  mRooms:"oda", mReady:"hazır", mNeeds:"bilgi gerekli", mBuilt:"oluşturuldu",
+  job:"İş ayarları", buildAll:"5 hazır odayı oluştur",
+  hRoom:"Oda", hStatus:"Durum", hArea:"Alan", hCeil:"Tavan",
+  hOpen:"Boşluk", hFix:"Tesisat",
+  built:"Oluşturuldu", ready:"Hazır", needs:"Bilgi gerekli",
+  askCeil:"Bu odada tavan ölçülmemiş. Bir yükseklik gir, oda oluşturulsun.",
+  hint:"BİR YÜZEYE TIKLA",
+  tFace:"Yüzey", tEdge:"Kenar", tOpen:"Boşluk", tFix:"Tesisat",
+  iSel:"Seçim", iType:"Tür", iArea:"Alan", iLen:"Uzunluk",
+  iThick:"Bu duvarın kalınlığı", iDefault:"cm · iş varsayılanı 20",
+  iRoom:"Oda", iFloor:"Zemin düzlemi", iCeil:"Tavan düzlemi",
+  iH:"Yükseklik", iVol:"Hacim", iSock:"Priz", iPipe:"Su tesisatı",
+  iNote:"Tavan, köşeler boyunca 269,77 ile 273,99 arasında okuyor. Snapir ortalama almak yerine bunların içinden <b>tek bir gerçek düzlem</b> geçiriyor.",
+  nBuild:"Oluşturma", nFix:"Tesisat", nExport:"Dışa aktarma", nLang:"Dil", nAbout:"Hakkında",
+  cWall:"Duvar kalınlığı",
+  cWallP:"İşteki her odaya uygulanır. Tek bir duvar, çalışma alanında tıklanarak ayrıca ayarlanabilir.",
+  cSlab:"Döşeme ve tavan kalınlığı",
+  cSlabP:"Odanın altındaki ve üstündeki döşemelerin kalınlığı.",
+  cFit:"Tavan düzlemi uydur",
+  cFitP:"Ölçülen tavan köşelerinin içinden tek bir düzlem geçirir, ortalama yüksekliğe düzlemez.",
+  cCut:"Boşlukları kes",
+  cCutP:"Kapı ve pencereler duvarı boydan boya keser. Kesim öncesi her oda onaylanır.",
+  cFix:"Tesisat elemanlarını oluştur",
+  cFixP:"Prizler duvar yüzeyinde kasa olur, su tesisatı noktaları duvardan çıkan boru ucu olur.",
+  n1h:"Altın tek bir anlama gelir",
+  n1p:"Seçili, birincil ya da oluşturulmuş. Hiçbir şey süs olsun diye altın değil, böylece göz nerede olduğunu hep bilir.",
+  n2h:"Web yazısı değil, sistem yazısı",
+  n2p:"Arayüz platformun kendi yazı tipini kullanır, böylece bir sayfa gibi değil bir Windows uygulaması gibi okunur. Her ölçü <code>tabular-nums</code> ile dizilir, rakamlar sütun boyunca hizalanır.",
+  n3h:"Fark etmediğin hareket",
+  n3p:"Vurgu ve seçim 130 ms'de, ekranlar 190 ms'de oturur, hepsi tek bir eğri üzerinde. Hiçbir şey yanıp sönmez, zıplamaz ve her geçişin azaltılmış hareket karşılığı vardır.",
+  n4h:"Sorar, asla tahmin etmez",
+  n4p:"Ölçüm belirsiz olduğunda oda eksik olanı tek cümleyle söyler. Bir köşeyi ya da tavan yüksekliğini asla uydurmaz."
+};
+const EN = {};
+document.querySelectorAll('[data-i]').forEach(el => EN[el.dataset.i] = el.innerHTML);
+
+function setLang(code){
+  const dict = code === 'tr' ? TR : EN;
+  document.querySelectorAll('[data-i]').forEach(el => {
+    const v = dict[el.dataset.i];
+    if (v !== undefined) el.innerHTML = v;
+  });
+  document.documentElement.lang = code;
+  document.querySelectorAll('.lang button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.lang === code)));
+}
+document.querySelectorAll('.lang button').forEach(b =>
+  b.addEventListener('click', () => setLang(b.dataset.lang)));
+
+/* ---------------- screen switching ---------------- */
+const tabs = [...document.querySelectorAll('.tabs button')];
+tabs.forEach(t => t.addEventListener('click', () => {
+  tabs.forEach(o => o.setAttribute('aria-selected', String(o === t)));
+  document.querySelectorAll('.pane').forEach(p =>
+    p.classList.toggle('on', p.id === t.dataset.pane));
+}));
+
+/* toggles that behave like the real thing */
+document.querySelectorAll('.sw').forEach(s => s.addEventListener('click', () =>
+  s.setAttribute('aria-checked', s.getAttribute('aria-checked') === 'true' ? 'false' : 'true')));
+document.querySelectorAll('.tools').forEach(g => {
+  const bs = [...g.querySelectorAll('button')];
+  bs.forEach(b => b.addEventListener('click', () =>
+    bs.forEach(o => o.setAttribute('aria-pressed', String(o === b)))));
+});
+document.querySelectorAll('.snav').forEach(g => {
+  const bs = [...g.querySelectorAll('button')];
+  bs.forEach(b => b.addEventListener('click', () =>
+    bs.forEach(o => o.setAttribute('aria-current', String(o === b)))));
+});
+document.querySelectorAll('.list .lrow').forEach(r => r.addEventListener('click', () =>
+  document.querySelectorAll('.list .lrow').forEach(o =>
+    o.setAttribute('aria-current', String(o === r)))));
+document.querySelectorAll('.tbl tbody tr').forEach(r => r.addEventListener('click', () =>
+  document.querySelectorAll('.tbl tbody tr').forEach(o => o.classList.toggle('sel', o === r))));
+
+/* ---------------- viewport ---------------- */
+/* Real Daire 53 Salon geometry, centimetres, from the survey CSV. */
+const RING = [[0,0],[395.06,0],[393.72,-421.16],[357.35,-423.18],[357.05,-464.36],
+  [395.20,-465.15],[394.07,-600.80],[50.55,-600.23],[29.52,-584.79],[30.26,-547.46],
+  [-2.21,-547.15]];
+const H = 272.1;
+const SOCKETS = [[52.81,-1.17,63.61],[368.58,-0.80,67.69],[393.83,-90.75,126.95],
+  [392.91,-270.40,64.53],[393.25,-277.18,65.59],[392.88,-385.94,64.26],
+  [393.24,-502.61,123.46],[271.16,-599.29,123.38],[251.74,-600.29,35.52],
+  [213.99,-598.09,122.81],[119.59,-599.61,190.76],[76.32,-598.98,225.08],
+  [170.20,-598.75,63.47],[0.04,-468.57,62.21],[0.99,-318.71,60.05]];
+const PIPES = [[159.64,-589.86,57.73],[150.07,-590.86,56.86],[140.64,-591.62,55.61],
+  [143.56,-591.85,47.43],[153.67,-591.64,42.53]];
+
+const YAW = -0.62, PITCH = 1.05;
+const ca = Math.cos(YAW), sa = Math.sin(YAW), cp = Math.cos(PITCH), sp = Math.sin(PITCH);
+const project = (x, y, z) => {
+  const u = x * ca - y * sa, v = x * sa + y * ca;
+  return [u, v * cp - z * sp, v];
+};
+
+const svg = document.getElementById('iso');
+const NS = 'http://www.w3.org/2000/svg';
+const n = RING.length;
+
+let a2 = 0;
+for (let i = 0; i < n; i++){
+  const [x1,y1] = RING[i], [x2,y2] = RING[(i+1)%n];
+  a2 += x1*y2 - x2*y1;
+}
+const ccw = a2 > 0;
+
+const walls = [];
+for (let i = 0; i < n; i++){
+  const a = RING[i], b = RING[(i+1)%n];
+  const dx = b[0]-a[0], dy = b[1]-a[1];
+  const L = Math.hypot(dx, dy) || 1;
+  let nx = ccw ? dy/L : -dy/L, ny = ccw ? -dx/L : dx/L;   // outward normal
+  const pts = [project(a[0],a[1],0), project(b[0],b[1],0),
+               project(b[0],b[1],H), project(a[0],a[1],H)];
+  walls.push({ i, a, b, nx, ny, len: L,
+    back: nx*sa + ny*ca > 0,                 // faces away from the camera
+    depth: Math.max(...pts.map(p => p[2])), pts });
+}
+
+const floor = RING.map(([x,y]) => project(x,y,0));
+const all = [...walls.flatMap(w => w.pts), ...floor];
+const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
+const [mnX, mxX, mnY, mxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+const PAD = 38, W = 660, Hh = 420;
+const s = Math.min((W - PAD*2)/(mxX-mnX), (Hh - PAD*2)/(mxY-mnY));
+const ox = PAD + ((W - PAD*2) - (mxX-mnX)*s)/2 - mnX*s;
+const oy = PAD + ((Hh - PAD*2) - (mxY-mnY)*s)/2 - mnY*s;
+const sx = p => p[0]*s + ox, sy = p => p[1]*s + oy;
+
+function el(tag, attrs){
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  svg.appendChild(e);
+  return e;
+}
+const poly = (pts, attrs) =>
+  el('polygon', { points: pts.map(p => `${sx(p).toFixed(1)},${sy(p).toFixed(1)}`).join(' '),
+                  'stroke-linejoin':'round', ...attrs });
+
+poly(floor, { fill:'var(--mass)', stroke:'var(--mass-3)', 'stroke-width':1 });
+
+const back = walls.filter(w => w.back).sort((a,b) => b.depth - a.depth);
+const info = document.getElementById('selType');
+const area = document.getElementById('selArea');
+const len  = document.getElementById('selLen');
+let picked = null;
+
+back.forEach(w => {
+  const p = poly(w.pts, { fill:'var(--mass-2)', stroke:'var(--mass-3)',
+                          'stroke-width':1, class:'pick', tabindex:'0',
+                          role:'button' });
+  p.setAttribute('aria-label', `Wall face ${w.i + 1}`);
+  const choose = () => {
+    if (picked) { picked.setAttribute('fill', 'var(--mass-2)'); picked.classList.add('pick'); }
+    picked = p;
+    p.setAttribute('fill', 'var(--gold)');
+    p.classList.remove('pick');
+    const t = document.querySelector('.lang button[aria-pressed="true"]').dataset.lang;
+    info.textContent = t === 'tr' ? 'Duvar yüzeyi' : 'Wall face';
+    area.textContent = (w.len * H / 10000).toFixed(2) + ' m²';
+    len.textContent  = w.len.toFixed(1) + ' cm';
+  };
+  p.addEventListener('click', choose);
+  p.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); } });
+  if (w.i === 1) choose();
+});
+
+/* Ceiling ring, so the fitted plane is legible. */
+el('polygon', { points: RING.map(([x,y]) => project(x,y,H))
+                  .map(p => `${sx(p).toFixed(1)},${sy(p).toFixed(1)}`).join(' '),
+                fill:'none', stroke:'var(--ink-3)', 'stroke-width':1, 'stroke-dasharray':'4 5' });
+
+/* Services, drawn only where the wall they sit on is visible. */
+function onVisibleWall(x, y){
+  let best = null;
+  for (const w of walls){
+    const dx = w.b[0]-w.a[0], dy = w.b[1]-w.a[1];
+    const t = Math.max(0, Math.min(1, ((x-w.a[0])*dx + (y-w.a[1])*dy) / (dx*dx + dy*dy)));
+    const d = Math.hypot(x - (w.a[0]+t*dx), y - (w.a[1]+t*dy));
+    if (!best || d < best.d) best = { d, w };
+  }
+  return best.w.back;
+}
+SOCKETS.forEach(([x,y,z]) => {
+  if (!onVisibleWall(x,y)) return;
+  const p = project(x,y,z);
+  el('rect', { x:(sx(p)-4).toFixed(1), y:(sy(p)-4).toFixed(1), width:8, height:8, rx:1.5,
+               fill:'var(--panel)', stroke:'var(--ink)', 'stroke-width':1.3 });
+});
+PIPES.forEach(([x,y,z]) => {
+  if (!onVisibleWall(x,y)) return;
+  const p = project(x,y,z);
+  el('circle', { cx:sx(p).toFixed(1), cy:sy(p).toFixed(1), r:3.6,
+                 fill:'var(--panel)', stroke:'var(--gold-ink)', 'stroke-width':1.6 });
+});
+
+/* Surveyed corners, the thing the whole body is built from. */
+RING.forEach(([x,y]) => {
+  const p = project(x,y,0);
+  el('circle', { cx:sx(p).toFixed(1), cy:sy(p).toFixed(1), r:3,
+                 fill:'var(--panel)', stroke:'var(--ink)', 'stroke-width':1.4 });
+});
+</script>
