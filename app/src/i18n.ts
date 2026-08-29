@@ -33,6 +33,7 @@ const en = {
 
   sketchTitle: "Edit outline",
   sketchApply: "Apply outline", sketchReset: "Reset to survey",
+  sketchWipe: "Wipe outline",
   sketchPoints: "corners in outline",
 
   askCeiling: "No ceiling was measured here. Enter a height and it builds.",
@@ -82,6 +83,7 @@ const en = {
   deletePoint: "Delete point", deleted: "Point deleted",
   lineTitle: "Line", between: "Between", deleteLine: "Delete line",
   exportWall: "Export this wall", wallNote: "The wall arrives with its openings cut and its own sockets and pipes on it.",
+  outlineWiped: "Outline cleared. Pick corners in order.",
   outlineApplied: "Outline applied", lineAdded: "Line added", lineRemoved: "Line removed",
   srcDrawn: "from the surveyor's lines", srcLayer: "from the layer tags",
   srcInferred: "inferred from shot order",
@@ -136,6 +138,7 @@ const tr: Record<keyof typeof en, string> = {
 
   sketchTitle: "Oda hattını düzenle",
   sketchApply: "Hattı uygula", sketchReset: "Ölçüme dön",
+  sketchWipe: "Hattı temizle",
   sketchPoints: "köşe hatta",
 
   askCeiling: "Bu odada tavan ölçülmemiş. Bir yükseklik gir, oda oluşturulsun.",
@@ -185,6 +188,7 @@ const tr: Record<keyof typeof en, string> = {
   deletePoint: "Noktayı sil", deleted: "Nokta silindi",
   lineTitle: "Çizgi", between: "Arasında", deleteLine: "Çizgiyi sil",
   exportWall: "Bu duvarı aktar", wallNote: "Duvar, boşlukları kesilmiş ve kendi prizleri ile boruları üzerinde olarak gelir.",
+  outlineWiped: "Oda hattı silindi. Köşeleri sırayla seç.",
   outlineApplied: "Oda hattı uygulandı", lineAdded: "Çizgi eklendi",
   lineRemoved: "Çizgi kaldırıldı",
   srcDrawn: "ölçümcünün çizgilerinden", srcLayer: "katman etiketlerinden",

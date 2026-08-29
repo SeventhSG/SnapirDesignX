@@ -29,6 +29,7 @@ import java.io.File;
 public class MainActivity extends Activity {
 
     private static final int REQ_LEGACY_STORAGE = 41;
+    private static final int REQ_PICK_TREE = 42;
 
     private WebView web;
     private TextView status;
@@ -115,6 +116,58 @@ public class MainActivity extends Activity {
             web.setVisibility(View.VISIBLE);
             web.loadUrl(NativeService.ORIGIN + "/");
         });
+    }
+
+    /**
+     * Opens the system Files app to choose a survey folder.
+     *
+     * <p>The picker returns a {@code content://} tree, which the geometry core
+     * cannot open, so the choice is mapped back to a real path. When that
+     * mapping fails, which it can on an unusual storage provider, the built-in
+     * directory browser takes over rather than leaving the operator stuck.
+     */
+    void pickFolder() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        try {
+            startActivityForResult(i, REQ_PICK_TREE);
+        } catch (Exception e) {
+            browseForFolder();
+        }
+    }
+
+    private void browseForFolder() {
+        FolderPicker.show(this, new FolderPicker.Listener() {
+            @Override
+            public void onPicked(String absolutePath) {
+                deliverFolder(absolutePath);
+            }
+
+            @Override
+            public void onCancelled() {
+                deliverFolder(null);
+            }
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PICK_TREE) return;
+
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            deliverFolder(null);
+            return;
+        }
+
+        final String path = StoragePaths.toFilePath(data.getData());
+        if (path == null) {
+            toast("That folder is not on internal storage. Pick it here instead.");
+            browseForFolder();
+            return;
+        }
+        deliverFolder(path);
     }
 
     /** Hands a chosen folder back to the promise the page is waiting on. */

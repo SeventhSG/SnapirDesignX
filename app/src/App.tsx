@@ -546,7 +546,7 @@ export default function App() {
 
         {/* ---------------- workspace ---------------- */}
         {screen === "work" && room && (
-          <div className="ws">
+          <div className={inSketch ? "ws sketching" : "ws"}>
             <div className="vp">
               {(!inSketch || view === "3d") && (
                 <Viewport
@@ -631,6 +631,9 @@ export default function App() {
                 <div className="sketchbar">
                   <span className="num">{ring.length}</span>
                   <span>{T("sketchPoints")}</span>
+                  <button className="btn q sm" disabled={ring.length === 0}
+                          onClick={() => { setRing([]); setPending(null); say(T("outlineWiped")); }}>
+                    {T("sketchWipe")}</button>
                   <button className="btn q sm" onClick={() => setRing(room.outline)}>
                     {T("sketchReset")}</button>
                   <button className="btn sm" disabled={ring.length < 3}

@@ -63,7 +63,15 @@ button{font-family:inherit}
 .titlebar b{font-size:13px;font-weight:600;letter-spacing:-.005em}
 .titlebar .crumb{color:var(--ink-3);font-weight:450}
 .titlebar .right{margin-left:auto;display:flex;align-items:center;gap:8px;
-  -webkit-app-region:no-drag;padding-right:140px}
+  -webkit-app-region:no-drag;flex:none}
+/* Only the frameless desktop window has controls to keep clear of. */
+:root[data-shell="electron"] .titlebar .right{padding-right:140px}
+
+/* A long room name shortens; it never pushes the title onto a second line. */
+.titlebar{min-width:0;flex-wrap:nowrap}
+.titlebar b{white-space:nowrap;flex:none}
+.titlebar .crumb{min-width:0;flex:0 1 auto;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
 .main{flex:1;min-height:0;display:flex;flex-direction:column}
 
 .lang{display:inline-flex;padding:2px;background:var(--sunk);
@@ -393,3 +401,162 @@ button{font-family:inherit}
   padding:12px 14px;max-width:min(760px,90vw);max-height:240px;overflow:auto;
   text-align:left;white-space:pre-wrap;user-select:text}
 .crashacts{display:flex;gap:10px}
+
+
+/* ================================================================== screens
+   One interface, four shapes. The desktop layout above is the reference; what
+   follows adapts its geometry to a tablet and a phone without changing a
+   single colour, weight or rule of the design.
+
+   The order matters: touch sizing first because it applies to any screen with
+   a finger on it, then progressively narrower widths. */
+
+/* ------------------------------------------------ touch
+   A mouse can hit a 24px target. A thumb cannot. This is keyed to the pointer
+   rather than the width, so a touchscreen laptop and a tablet both get it. */
+@media (pointer:coarse){
+  .btn{padding:10px 16px;font-size:13.5px}
+  .btn.sm{padding:9px 13px;font-size:12.5px}
+  .seg{padding:3px}
+  .seg button{padding:9px 14px;font-size:12.5px}
+  .lang button{padding:7px 12px;font-size:11.5px}
+  .rail button{padding:11px 14px;font-size:12.5px}
+  .role{padding:10px 10px;font-size:13px}
+  .tbl td{padding:14px 12px}
+  .lrow{padding:16px}
+  .stepper button{width:38px;height:38px;font-size:17px}
+  .stepper input{height:38px;width:64px;font-size:13.5px}
+  .stepper .unit{line-height:38px}
+  .sw{width:46px;height:28px}
+  .sw::after{width:22px;height:22px}
+  .sw[aria-checked="true"]::after{transform:translateX(18px)}
+  .snav button{padding:11px 12px}
+  /* Nothing hover-only may be the only way to reach something. */
+  .card:hover{transform:none}
+}
+
+/* ------------------------------------------------ tablet
+   Still side by side; the inspector just stops taking a third of a 10-inch
+   screen. */
+@media (max-width:1100px){
+  .ws{grid-template-columns:1fr minmax(240px,272px)}
+  .set{grid-template-columns:172px 1fr}
+  .page{padding:20px 20px 30px}
+  .sbody{padding:18px 20px 28px}
+  .hero{padding:22px}
+}
+
+/* ------------------------------------------------ viewport overlay
+   The tools sit in one corner of the viewport and the actions in the other.
+   That holds while there is width for both; below it they collide, which
+   happens long before the whole layout needs to stack, because a phone on its
+   side is 915px wide and still only leaves ~620px of viewport. So the trigger
+   is the space available, not the class of device: the overlay becomes a
+   column, hint at the top and controls along the bottom, and nothing can ever
+   land on top of anything else. */
+@media (max-width:1100px), (max-height:620px){
+  .vp .overlay{display:flex;flex-direction:column;gap:8px;padding:10px}
+  .vp .hud,.vp .tools,.vp .acts{position:static;left:auto;right:auto;bottom:auto}
+  .vp .tools{margin-top:auto;max-width:none;pointer-events:auto;
+    display:flex;flex-wrap:wrap;gap:6px}
+  .vp .acts{pointer-events:auto;display:flex;flex-wrap:wrap;gap:6px;
+    justify-content:flex-end}
+
+  /* The edit rail runs across the top instead of down the side. */
+  .rail{position:absolute;left:10px;right:10px;top:10px;bottom:auto;transform:none;
+    flex-direction:row;justify-content:center;gap:3px}
+  .rail button{min-width:0;flex:1 1 auto;text-align:center}
+  /* The hint clears the rail while the rail is showing. */
+  .sketching .vp .overlay{padding-top:58px}
+
+  .sketchbar{left:10px;right:10px;transform:none;flex-wrap:wrap;justify-content:center}
+}
+
+/* ------------------------------------------------ compact
+   Below this the two-column workspace stops working: 292px of inspector out of
+   a 400px screen leaves a viewport too narrow to read a room in. The panels
+   stack instead, the viewport takes the top half, and the inspector scrolls
+   under it. */
+@media (max-width:820px){
+  .titlebar{height:auto;min-height:46px;padding:7px 12px;gap:9px}
+
+  .page{padding:16px 14px 26px}
+  .page-head{flex-wrap:wrap;gap:8px}
+  .page-head h2{font-size:17px}
+
+  /* Workspace: viewport over inspector, each scrolling on its own. */
+  .ws{grid-template-columns:1fr;grid-template-rows:minmax(210px,44vh) minmax(0,1fr)}
+  /* Sketching is drawing, and drawing needs the room. The outline bar alone
+     takes a third of the viewport at this size. */
+  .ws.sketching{grid-template-rows:minmax(300px,60vh) minmax(0,1fr)}
+  .vp{border-right:0;border-bottom:1px solid var(--line)}
+  .insp{border-left:0;padding:14px}
+  /* Stacked, the panel is as wide as the screen. A label at one edge and its
+     number at the other stops being a pair, so the readings keep a column. */
+  .insp .kv,.insp .hint,.insp .warnbox,.insp .fld{max-width:520px}
+
+  /* Openings and corners are reference, not decision. They go first. */
+  .tbl th:nth-child(5),.tbl td:nth-child(5),
+  .tbl th:nth-child(6),.tbl td:nth-child(6){display:none}
+  .tbl th,.tbl td{padding-left:10px;padding-right:10px}
+  .tbl td small{font-size:11.5px}
+
+  /* Settings: the section list sits above its own body. */
+  .set{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+  .snav{flex-direction:row;overflow-x:auto;border-right:0;
+    border-bottom:1px solid var(--line);padding:8px 10px;gap:4px}
+  .snav button{white-space:nowrap;flex:none}
+  .sbody{padding:16px 14px 26px}
+  .srow{grid-template-columns:1fr;gap:10px;align-items:start}
+  .srow > *:not(.t){justify-self:start}
+  .srow p{max-width:none}
+
+  /* Home */
+  .hero{flex-direction:column;align-items:flex-start;gap:14px;padding:20px}
+  .stats{margin-left:0;gap:22px}
+  .homeacts{flex-wrap:wrap}
+  .cards{grid-template-columns:1fr}
+
+  .lrow{grid-template-columns:1fr;gap:10px}
+  .meta{gap:18px}
+  .meta div{align-items:flex-start}
+
+  .textin{width:100%;max-width:100%}
+  .pathbox{flex-wrap:wrap}
+  .pathbox code{max-width:100%}
+  .toast{left:12px;right:12px;transform:none;text-align:center}
+  @keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+}
+
+/* ------------------------------------------------ phone
+   The brand gives way to the thing being worked on. */
+@media (max-width:520px){
+  .titlebar b{display:none}
+  .titlebar .crumb{font-size:12.5px;color:var(--ink-2)}
+  .titlebar .right{gap:6px}
+
+  .page{padding:14px 12px 24px}
+  .ws{grid-template-rows:minmax(190px,42vh) minmax(0,1fr)}
+  .insp{padding:12px;gap:14px}
+
+  /* Ceiling height is on the room screen; area and status decide what to open. */
+  .tbl th:nth-child(4),.tbl td:nth-child(4){display:none}
+
+  .hero h1{font-size:20px}
+  .stats .num{font-size:19px}
+  .empty{padding:32px 18px}
+  .vp .acts{justify-content:stretch}
+  .vp .acts .btn{flex:1 1 auto;text-align:center}
+}
+
+/* ------------------------------------------------ short and wide
+   A phone on its side has plenty of width and almost no height, so stacking is
+   exactly wrong there: it would leave a 120px viewport. Side by side returns,
+   with the inspector as a narrow column. */
+@media (max-height:560px) and (orientation:landscape){
+  .ws{grid-template-columns:1fr minmax(212px,32%);grid-template-rows:minmax(0,1fr)}
+  .vp{border-right:1px solid var(--line);border-bottom:0}
+  .insp{border-left:1px solid var(--line);border-top:0}
+  .titlebar{min-height:40px;padding:4px 10px}
+  .page{padding:12px 14px 20px}
+}

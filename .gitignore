@@ -22,3 +22,6 @@ android/.gradle/
 android/local.properties
 android/app/src/main/assets/web/
 android/app/.cxx/
+
+# Layout screenshots from tools/shoot_layouts.js
+shots/
