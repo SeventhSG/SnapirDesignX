@@ -12,6 +12,11 @@ on:
       - 'tools/build_ios.py'
       - 'tools/verify_ios_sim.py'
       - '.github/workflows/ios.yml'
+  # A release is cut from artifacts built on a Windows machine, which cannot
+  # build iOS at all. Rebuilding here on publish is the only way a tagged
+  # version has a corresponding iOS build that anyone can point at.
+  release:
+    types: [published]
   workflow_dispatch:
 
 concurrency:
