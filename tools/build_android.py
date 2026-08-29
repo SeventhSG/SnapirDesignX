@@ -36,7 +36,7 @@ def stage_web() -> None:
 
 def main(variant: str = "release") -> int:
     if not (ROOT / ".deps" / "occt-android").is_dir():
-        raise SystemExit("No arm64 kernel. Run native/build-occt-android.bat first."))
+        raise SystemExit("No arm64 kernel. Run native/build-occt-android.bat first.")
 
     stage_web()
 

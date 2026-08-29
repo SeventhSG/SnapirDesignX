@@ -2,6 +2,11 @@ plugins {
     id 'com.android.application'
 }
 
+// CMake reads a Windows path's backslashes as string escapes and chokes on the
+// \U in C:\Users, so every path handed to it goes in with forward slashes.
+def occtRoot = rootProject.file('../.deps/occt-android').absolutePath.replace('\\', '/')
+def nativeRoot = rootProject.file('../native').absolutePath.replace('\\', '/')
+
 android {
     namespace 'com.snapirdesign.designx'
     compileSdk 34
@@ -22,8 +27,8 @@ android {
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=c++_shared',
-                          "-DOCCT_ANDROID_ROOT=${rootProject.file('../.deps/occt-android').absolutePath}",
-                          "-DSNAPIR_NATIVE_ROOT=${rootProject.file('../native').absolutePath}"
+                          "-DOCCT_ANDROID_ROOT=${occtRoot}",
+                          "-DSNAPIR_NATIVE_ROOT=${nativeRoot}"
                 cppFlags '-std=c++17', '-fexceptions', '-frtti'
             }
         }
@@ -54,6 +59,7 @@ android {
     }
 }
 
+// No dependencies. A WebView shell needs nothing AppCompat provides, and
+// leaving it out drops the whole Kotlin stdlib chain that came with it.
 dependencies {
-    implementation 'androidx.appcompat:appcompat:1.7.0'
 }

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Snapir" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <!-- The page paints itself, so the shell only has to stay out of the way
+         and not flash white on the way in. -->
+    <style name="Theme.Snapir" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:windowBackground">#0d0f12</item>
     </style>
 </resources>

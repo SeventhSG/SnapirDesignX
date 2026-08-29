@@ -1,6 +1,8 @@
 package com.snapirdesign.designx;
 
 import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -14,11 +16,6 @@ import android.webkit.WebView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AlertDialog;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-
 import java.io.File;
 
 /**
@@ -29,7 +26,7 @@ import java.io.File;
  * same C++ and the same React the desktop runs, which is the reason this file
  * is as short as it is.
  */
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
 
     private static final int REQ_LEGACY_STORAGE = 41;
 
@@ -85,10 +82,9 @@ public class MainActivity extends AppCompatActivity {
                     })
                     .setNegativeButton("Not now", null)
                     .show();
-        } else if (ContextCompat.checkSelfPermission(this,
-                android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else if (checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{
+            requestPermissions(new String[]{
                     android.Manifest.permission.READ_EXTERNAL_STORAGE,
                     android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
             }, REQ_LEGACY_STORAGE);

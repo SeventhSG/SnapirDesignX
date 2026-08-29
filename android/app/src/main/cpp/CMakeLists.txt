@@ -41,17 +41,16 @@ set(OCCT_LIBS
   TKXSBase TKMath TKernel
 )
 
+# Named outright rather than through find_library. Under the NDK toolchain,
+# library searches are re-rooted into the sysroot, so a path outside it is not
+# found however it is spelled.
 foreach(tk ${OCCT_LIBS})
-  find_library(OCCT_${tk} NAMES ${tk} PATHS
-    ${OCCT_ANDROID_ROOT}/lib
-    ${OCCT_ANDROID_ROOT}/lin64/clang/lib
-    ${OCCT_ANDROID_ROOT}/and64/clang/lib
-    NO_DEFAULT_PATH)
-  if(NOT OCCT_${tk})
-    message(FATAL_ERROR "Missing OCCT toolkit ${tk} under ${OCCT_ANDROID_ROOT}. "
-                        "Build it first with tools/build_occt_android.py")
+  set(archive ${OCCT_ANDROID_ROOT}/lib/lib${tk}.a)
+  if(NOT EXISTS ${archive})
+    message(FATAL_ERROR "Missing OCCT toolkit ${tk} at ${archive}. "
+                        "Build it first with native/build-occt-android.bat")
   endif()
-  list(APPEND OCCT_RESOLVED ${OCCT_${tk}})
+  list(APPEND OCCT_RESOLVED ${archive})
 endforeach()
 
 find_library(log-lib log)

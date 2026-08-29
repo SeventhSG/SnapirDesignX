@@ -301,7 +301,13 @@ content. Serving both from `127.0.0.1:8765` removes the problem rather than
 working around it. The built React bundle is unpacked out of the APK on first
 run and handed to the same `httplib` server as a mount point.
 
-The Java side is four small files:
+The Java side has no dependencies at all. AppCompat was the obvious import and
+went in first, but a WebView shell uses nothing it provides, and it dragged in a
+Kotlin stdlib that collided with itself. Plain `android.app.Activity` and
+`android.app.AlertDialog` do the job, and the APK is a library chain lighter for
+it.
+
+Four small files:
 
 | | |
 |---|---|
@@ -320,6 +326,18 @@ picker, because the picker returns `content://` URIs and the geometry core opens
 files with the standard library. That is also what lets the same parser read the
 same CSVs on both platforms. It needs All files access, which on Android 11 and
 up only the user can grant, in Settings.
+
+## What it came to
+
+    APK                     31.9 MB
+      libsnapir.so          28.9 MB   the core plus every OCCT toolkit it uses
+      libc++_shared.so       1.2 MB
+      assets/web             0.7 MB   the interface, unchanged
+      classes.dex             20 KB   the entire Java shell
+
+28.9 MB of kernel, from 1.5 GB of static archives, because the linker keeps only
+what is reached. That answers open question 2, which asked whether 80 to 120 MB
+of kernel was acceptable on a phone: it never got near that.
 
 ## What is not verified
 
