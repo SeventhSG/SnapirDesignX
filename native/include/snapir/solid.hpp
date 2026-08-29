@@ -72,6 +72,31 @@ SolidStats solid_stats(const TopoDS_Shape& shape);
 std::string export_step(const TopoDS_Shape& shape, const std::string& path,
                         const std::string& schema = "AP214");
 
+// Every exact format a body can be handed over in.
+//
+// Exact means B-rep: planes stay planes and the surveyed corner stays where the
+// instrument put it. A mesh format would replace all of that with triangles and
+// a tolerance, so none is offered here on purpose.
+struct ExportFormat {
+  const char* id;      // what the API and the UI call it
+  const char* suffix;  // including the dot
+};
+const std::vector<ExportFormat>& export_formats();
+
+// True if id names a format export_shape can write.
+bool is_export_format(const std::string& id);
+
+// The extension a format writes, ".step" for an unknown id.
+std::string export_suffix(const std::string& fmt);
+
+// Write one body in millimetres. base_path carries no extension; the one for
+// the format is appended, and the written path is returned.
+//
+// schema applies to STEP only and is ignored by the other formats.
+std::string export_shape(const TopoDS_Shape& shape, const std::string& base_path,
+                         const std::string& fmt = "step",
+                         const std::string& schema = "AP214");
+
 // Which outline edge a point in the plan belongs to. Takes metres, because that
 // is what the viewport reports for a picked face.
 int wall_index_at(const Room& room, double x_m, double y_m);

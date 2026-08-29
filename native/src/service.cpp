@@ -118,6 +118,7 @@ Json settings_to_json(const BuildSettings& c) {
               {"pipe_min_length", c.pipe_min_length},
               {"pipe_embed", c.pipe_embed},
               {"units", c.units},
+              {"export_format", c.export_format},
               {"step_schema", c.step_schema},
               {"output_dir", c.output_dir}};
 }
@@ -154,6 +155,7 @@ void apply_settings_json(BuildSettings& c, const Json& j) {
   num("pipe_min_length", c.pipe_min_length);
   num("pipe_embed", c.pipe_embed);
   str("units", c.units);
+  str("export_format", c.export_format);
   str("step_schema", c.step_schema);
   str("output_dir", c.output_dir);
 }
@@ -684,6 +686,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const ProjectRecord& proj = store.get(pid);
                Room room = room_or_throw(pid, name);
                const BuildSettings cfg = settings_for(pid);
+               const std::string fmt = url_param(req, "fmt", cfg.export_format);
+               const std::string schema = url_param(req, "schema", cfg.step_schema);
                const fs::path out = fs::u8path(proj.folder) / "Snapir STEP";
 
                // Same fixture decisions the preview was built with, so the file
@@ -691,14 +695,16 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const FixtureOverrides fx =
                    to_fixture_overrides(store.override_if_any(pid, name));
                const TopoDS_Shape shape = build_room(room, cfg, nullptr, &fx);
-               const std::string path = export_step(
-                   shape, (out / fs::u8path(name + ".step")).u8string(), cfg.step_schema);
+               const std::string path = export_shape(
+                   shape, (out / fs::u8path(name)).u8string(), fmt, schema);
 
                RoomOverride& ov = store.override_for(pid, name);
                ov.step_path = path;
                ov.built_at = now_iso8601();
                store.save();
-               ok_json(res, Json{{"path", path}, {"bytes", file_size_of(path)}});
+               ok_json(res, Json{{"path", path},
+                                 {"bytes", file_size_of(path)},
+                                 {"format", fmt}});
              } catch (const std::out_of_range& e) {
                fail(res, 404, e.what());
              } catch (const std::exception& e) {
@@ -716,6 +722,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const ProjectRecord& proj = store.get(pid);
                Room room = room_or_throw(pid, name);
                const BuildSettings cfg = settings_for(pid);
+               const std::string fmt = url_param(req, "fmt", cfg.export_format);
+               const std::string schema = url_param(req, "schema", cfg.step_schema);
                const FixtureOverrides fx =
                    to_fixture_overrides(store.override_if_any(pid, name));
 
@@ -738,15 +746,15 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const SolidStats stats = solid_stats(wb.shape);
                const fs::path out =
                    fs::u8path(proj.folder) / "Snapir STEP" / "Walls";
-               const std::string path = export_step(
+               const std::string path = export_shape(
                    wb.shape,
-                   (out / fs::u8path(name + " - wall " + std::to_string(edge + 1) +
-                                     ".step"))
+                   (out / fs::u8path(name + " - wall " + std::to_string(edge + 1)))
                        .u8string(),
-                   cfg.step_schema);
+                   fmt, schema);
 
                ok_json(res, Json{{"path", path},
                                  {"bytes", file_size_of(path)},
+                                 {"format", fmt},
                                  {"wall", edge + 1},
                                  {"length", round_to(wb.length, 1)},
                                  {"pieces", wb.solids},
@@ -769,7 +777,9 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const Room room = room_or_throw(pid, name);
                const fs::path out = fs::u8path(proj.folder) / "For Design X";
                const std::string path = export_curves(room, out.u8string(), fmt);
-               ok_json(res, Json{{"path", path}, {"bytes", file_size_of(path)}});
+               ok_json(res, Json{{"path", path},
+                                 {"bytes", file_size_of(path)},
+                                 {"format", fmt}});
              } catch (const std::out_of_range& e) {
                fail(res, 404, e.what());
              } catch (const std::exception& e) {

@@ -47,9 +47,12 @@ struct BuildSettings {
   double pipe_min_length = 40.0; // mm, floor for a point shot on the wall
   double pipe_embed = 50.0;      // mm the stub reaches into the wall
 
-  // Export
-  std::string units = "mm";  // every length above, and STEP
-  std::string step_schema = "AP214";
+  // Export. Exact B-rep only: "step", "iges" or "brep". A mesh format would
+  // trade the surveyed corner for a triangle and a tolerance, so none is
+  // offered.
+  std::string units = "mm";  // every length above, and every file written
+  std::string export_format = "step";
+  std::string step_schema = "AP214";  // AP203 | AP214 | AP242
   std::string output_dir = "out";
 };
 

@@ -1,13 +1,40 @@
 # Snapir Design X
 
-Leica iCON room surveys to solid bodies. Interior volumes, STEP out, no mesh
-anywhere in the chain.
+Leica iCON room surveys to solid bodies. Interior volumes, exact B-rep out, no
+mesh anywhere in the chain.
 
 ## Status
 
 Working end to end on real survey data: parse, classify, fit planes, build the
-shell, export STEP. 24 of the 28 rooms in the reference job build with no human
+shell, export. 24 of the 28 rooms in the reference job build with no human
 input; the other four have real problems in the data and say so.
+
+## Export formats
+
+Every format on offer is exact B-rep. Planes stay planes and the surveyed
+corner stays where the instrument put it.
+
+| Format | Extension | Opens in |
+|---|---|---|
+| STEP, schema AP203 / AP214 / AP242 | `.step` | SolidWorks, Geomagic Design X, Rhino, Revit, Inventor, Fusion, CATIA |
+| IGES 5.3 solids | `.igs` | SolidWorks, Geomagic Design X, Rhino, older CAD |
+| BREP | `.brep` | Open CASCADE tools, and Snapir itself |
+
+`native/build/check_export` proves the claim rather than repeating it: every
+room is built, written in each format, read back through the same kernel, and
+the face count and volume are compared with the body it came from. On the
+28-room reference survey STEP and BREP round-trip at zero volume drift; IGES
+loses about 1e-9 m3 to its own ASCII precision, roughly a thousandth of a cubic
+millimetre.
+
+**No mesh format is offered.** STL, OBJ, PLY and glTF all replace the surveyed
+corner with a triangle and a tolerance, which is the one thing this tool exists
+not to do.
+
+**`.sldprt` cannot be written**, by Snapir or by anything else outside
+SolidWorks: the format is closed and undocumented. The same is true of
+Parasolid `.x_t` and ACIS `.sat`, which additionally need a paid licence.
+SolidWorks imports STEP and IGES natively, so AP242 is the route in.
 
 The geometry core is C++ linked against Open CASCADE. It runs behind the
 Windows desktop app and, unchanged, inside the Android app and the iOS app.

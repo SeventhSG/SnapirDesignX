@@ -29,7 +29,20 @@ std::string num(double v, int places = 9) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::cerr << "usage: dump_solid <folder>\n";
+    std::cerr << "usage: dump_solid <folder> [--fmt step|iges|brep <out_dir>]\n";
+    return 2;
+  }
+
+  // Optional: also write every room out, so one command produces the files a
+  // format change has to be judged on.
+  std::string fmt, out_dir;
+  for (int i = 2; i + 1 < argc; ++i)
+    if (std::string(argv[i]) == "--fmt") {
+      fmt = argv[i + 1];
+      out_dir = i + 2 < argc ? argv[i + 2] : ".";
+    }
+  if (!fmt.empty() && !is_export_format(fmt)) {
+    std::cerr << "dump_solid: unknown format " << fmt << "\n";
     return 2;
   }
 
@@ -52,6 +65,14 @@ int main(int argc, char** argv) {
     emit(n, "shells", std::to_string(s.shells));
     emit(n, "faces", std::to_string(s.faces));
     emit(n, "volume_m3", num(s.volume_m3));
+
+    if (!fmt.empty()) {
+      try {
+        emit(n, "wrote", export_shape(shape, out_dir + "/" + n, fmt));
+      } catch (const std::exception& e2) {
+        emit(n, "wrote", std::string("ERROR ") + e2.what());
+      }
+    }
 
     const Mesh mesh = tessellate(shape);
     emit(n, "triangles", std::to_string(mesh.triangle_count()));

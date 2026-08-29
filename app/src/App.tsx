@@ -36,10 +36,27 @@ const ROLES: { role: string; key: Key }[] = [
   { role: "control", key: "rControl" },
 ];
 
+// Exact B-rep only. STEP and BREP round-trip through the kernel with zero
+// volume drift; IGES loses about a thousandth of a cubic millimetre to its own
+// text precision. Nothing here tessellates.
+const EXPORT_FORMATS = [
+  { id: "step", label: "STEP", suffix: ".step" },
+  { id: "iges", label: "IGES", suffix: ".igs" },
+  { id: "brep", label: "BREP", suffix: ".brep" },
+];
+const STEP_SCHEMAS = ["AP203", "AP214", "AP242"];
+
+const fmtLabel = (fmt: string, schema: string) =>
+  fmt === "step" ? `STEP ${schema}`
+                 : (EXPORT_FORMATS.find((f) => f.id === fmt)?.label ?? fmt);
+
 export default function App() {
   const [lang, setLang] = useState<Lang>(
     () => (localStorage.getItem("lang") as Lang) || "en");
   const T = useCallback((k: Key) => t(lang, k), [lang]);
+
+  const pickFmt = (f: string) => { setFmt(f); localStorage.setItem("exportFormat", f); };
+  const pickSchema = (v: string) => { setSchema(v); localStorage.setItem("stepSchema", v); };
 
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem("theme") as Theme) || "light");
@@ -66,6 +83,13 @@ export default function App() {
   const [pointName, setPointName] = useState<string | null>(null);
   const [look, setLook] = useState<"orbit" | "inside">("orbit");
   const [ghost, setGhost] = useState(false);
+
+  // Exact B-rep only. A mesh format cannot carry the surveyed corner back, so
+  // none is offered; see docs/APP.md.
+  const [fmt, setFmt] = useState(
+    () => localStorage.getItem("exportFormat") || "step");
+  const [schema, setSchema] = useState(
+    () => localStorage.getItem("stepSchema") || "AP214");
 
   const [settings, setSettings] = useState<Record<string, any> | null>(null);
   const [tab, setTab] = useState("build");
@@ -174,8 +198,8 @@ export default function App() {
     if (!project || !room) return;
     setBusy(true);
     try {
-      const r = await api.exportStep(project.id, room.name);
-      say(`${T("exported")} · ${(r.bytes / 1024).toFixed(0)} KB`);
+      const r = await api.exportStep(project.id, room.name, fmt, schema);
+      say(`${T("exported")} · ${fmtLabel(fmt, schema)} · ${(r.bytes / 1024).toFixed(0)} KB`);
       bridge?.reveal(r.path);
       setRooms((rs) => rs.map((x) =>
         x.name === room.name ? { ...x, status: "built" as const } : x));
@@ -188,8 +212,8 @@ export default function App() {
     if (!project || !room || face === null) return;
     setBusy(true);
     try {
-      const r = await api.exportWall(project.id, room.name, face);
-      say(`${T("exported")} · ${T("wallFace")} ${r.wall} · ` +
+      const r = await api.exportWall(project.id, room.name, face, fmt, schema);
+      say(`${T("exported")} · ${fmtLabel(fmt, schema)} · ${T("wallFace")} ${r.wall} · ` +
           `${r.length.toFixed(0)} cm · ${(r.bytes / 1024).toFixed(0)} KB`);
       bridge?.reveal(r.path);
     } catch (e) { say((e as Error).message, true); }
@@ -622,8 +646,22 @@ export default function App() {
                 <div className="acts">
                   <button className="btn q sm" onClick={() => setScreen("rooms")}>{T("back")}</button>
                   <button className="btn q sm" onClick={doDesignX}>{T("forDesignX")}</button>
+                  <select className="fmt" value={fmt} title={T("formatHelp")}
+                          onChange={(e) => pickFmt(e.target.value)}>
+                    {EXPORT_FORMATS.map((f) => (
+                      <option key={f.id} value={f.id}>{f.label}</option>
+                    ))}
+                  </select>
+                  {fmt === "step" && (
+                    <select className="fmt" value={schema} title={T("schemaHelp")}
+                            onChange={(e) => pickSchema(e.target.value)}>
+                      {STEP_SCHEMAS.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  )}
                   <button className="btn sm" onClick={doExport} disabled={!result || busy}>
-                    {T("exportStep")}</button>
+                    {T("exportRoom")}</button>
                 </div>
               </div>
 
@@ -900,13 +938,15 @@ export default function App() {
                 </Row>
               )}
               {tab === "export" && (
-                <Row title="STEP" help="AP214, millimetres, one file per room.">
-                  <span className="num" style={{ fontSize: 12 }}>{String(settings.step_schema)}</span>
+                <Row title={fmtLabel(fmt, schema)}
+                     help="Exact B-rep, millimetres, one file per room. Mesh formats are not offered: they would replace the surveyed corner with a triangle.">
+                  <span className="num" style={{ fontSize: 12 }}>
+                    {EXPORT_FORMATS.find((f) => f.id === fmt)?.suffix}</span>
                 </Row>
               )}
               {tab === "about" && (
                 <Row title="Snapir Design X" help="Leica iCON room surveys to solid bodies.">
-                  <span className="num" style={{ fontSize: 12 }}>1.0.0</span>
+                  <span className="num" style={{ fontSize: 12 }}>1.2.1</span>
                 </Row>
               )}
               <div style={{ marginTop: 18 }}>

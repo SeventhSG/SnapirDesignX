@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <IGESControl_Controller.hxx>
@@ -29,7 +30,7 @@ namespace {
 
 const std::map<std::string, std::string>& suffixes() {
   static const std::map<std::string, std::string> m = {
-      {"iges", ".igs"}, {"step", ".stp"}, {"asc", ".asc"}};
+      {"iges", ".igs"}, {"step", ".stp"}, {"brep", ".brep"}, {"asc", ".asc"}};
   return m;
 }
 
@@ -92,10 +93,15 @@ std::string write_curves(const Room& room, const fs::path& path,
   const std::string out = path.u8string();
   if (fmt == "iges") {
     IGESControl_Controller::Init();
+    // Mode 0, surfaces. These are wires, not a body: brepmode has nothing to
+    // stitch and would only wrap each polyline in a shell it does not need.
     IGESControl_Writer writer("MM", 0);
     writer.AddShape(compound);
     writer.ComputeModel();
     if (!writer.Write(out.c_str())) throw BuildError("IGES write failed: " + out);
+  } else if (fmt == "brep") {
+    if (!BRepTools::Write(compound, out.c_str()))
+      throw BuildError("BREP write failed: " + out);
   } else {
     Interface_Static::SetCVal("write.step.unit", "MM");
     STEPControl_Writer writer;

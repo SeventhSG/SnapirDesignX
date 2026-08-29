@@ -560,3 +560,10 @@ button{font-family:inherit}
   .titlebar{min-height:40px;padding:4px 10px}
   .page{padding:12px 14px 20px}
 }
+
+/* Export format picker. Sits in the same row as the buttons it qualifies, and
+   is deliberately quiet: the choice is made once and then forgotten. */
+.fmt{height:26px;padding:0 6px;border:1px solid var(--line);border-radius:6px;
+     background:var(--panel);color:var(--ink);font:inherit;font-size:12px;
+     cursor:pointer}
+.fmt:hover{border-color:var(--gold)}

@@ -14,8 +14,11 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepTools.hxx>
 #include <GProp_GProps.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <IGESControl_Controller.hxx>
+#include <IGESControl_Writer.hxx>
 #include <Interface_Static.hxx>
 #include <STEPControl_Writer.hxx>
 #include <TopAbs_ShapeEnum.hxx>
@@ -540,17 +543,82 @@ SolidStats solid_stats(const TopoDS_Shape& shape) {
           count_of(shape, TopAbs_FACE), props.Mass() / 1.0e9};  // mm3 to m3
 }
 
+namespace {
+
+// OCCT names its schemas by enum, not by the number a CAD user says out loud.
+// Setting the integer is unambiguous where the string quietly falls back to the
+// default when it is not one of the names OCCT knows.
+int step_schema_code(const std::string& schema) {
+  if (schema == "AP203") return 3;                        // AP203
+  if (schema == "AP214" || schema == "AP214IS") return 4; // AP214IS
+  if (schema == "AP242" || schema == "AP242DIS") return 5;// AP242DIS
+  if (schema == "AP214CD") return 1;
+  if (schema == "AP214DIS") return 2;
+  throw BuildError("Unknown STEP schema: " + schema);
+}
+
+void ensure_parent(const std::filesystem::path& out) {
+  if (out.has_parent_path()) std::filesystem::create_directories(out.parent_path());
+}
+
+// IGES 5.3 solids (MSBO), not the loose trimmed surfaces mode 0 writes. A body
+// handed over as unstitched surfaces stops being a solid the moment it lands.
+std::string write_iges(const TopoDS_Shape& shape, const std::string& path) {
+  IGESControl_Controller::Init();
+  IGESControl_Writer writer("MM", 1);  // brepmode
+  if (!writer.AddShape(shape)) throw BuildError("IGES transfer failed: " + path);
+  writer.ComputeModel();
+  if (!writer.Write(path.c_str())) throw BuildError("IGES write failed: " + path);
+  return path;
+}
+
+}  // namespace
+
+const std::vector<ExportFormat>& export_formats() {
+  static const std::vector<ExportFormat> v = {
+      {"step", ".step"}, {"iges", ".igs"}, {"brep", ".brep"}};
+  return v;
+}
+
+bool is_export_format(const std::string& id) {
+  for (const auto& f : export_formats())
+    if (id == f.id) return true;
+  return false;
+}
+
+std::string export_suffix(const std::string& fmt) {
+  for (const auto& f : export_formats())
+    if (fmt == f.id) return f.suffix;
+  return ".step";
+}
+
 std::string export_step(const TopoDS_Shape& shape, const std::string& path,
                         const std::string& schema) {
-  const std::filesystem::path out = std::filesystem::u8path(path);
-  if (out.has_parent_path()) std::filesystem::create_directories(out.parent_path());
+  ensure_parent(std::filesystem::u8path(path));
 
-  Interface_Static::SetCVal("write.step.schema", schema.c_str());
+  Interface_Static::SetIVal("write.step.schema", step_schema_code(schema));
   Interface_Static::SetCVal("write.step.unit", "MM");
   STEPControl_Writer writer;
   writer.Transfer(shape, STEPControl_AsIs);
   if (writer.Write(path.c_str()) != IFSelect_RetDone)
     throw BuildError("STEP write failed: " + path);
+  return path;
+}
+
+std::string export_shape(const TopoDS_Shape& shape, const std::string& base_path,
+                         const std::string& fmt, const std::string& schema) {
+  if (!is_export_format(fmt)) throw BuildError("Unknown export format: " + fmt);
+  const std::string path = base_path + export_suffix(fmt);
+  ensure_parent(std::filesystem::u8path(path));
+
+  if (fmt == "step") return export_step(shape, path, schema);
+  if (fmt == "iges") return write_iges(shape, path);
+
+  // BREP carries the kernel's own numbers with nothing in between, so it is the
+  // one format that survives a round trip untouched. It is unitless; the body
+  // is already in millimetres by the time it gets here.
+  if (!BRepTools::Write(shape, path.c_str()))
+    throw BuildError("BREP write failed: " + path);
   return path;
 }
 

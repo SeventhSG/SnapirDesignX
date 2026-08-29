@@ -106,16 +106,20 @@ export const api = {
   build: (id: string, name: string) =>
     call<BuildResult>(`/projects/${id}/rooms/${encodeURIComponent(name)}/build`,
       { method: "POST" }),
-  exportStep: (id: string, name: string) =>
-    call<{ path: string; bytes: number }>(
-      `/projects/${id}/rooms/${encodeURIComponent(name)}/export`, { method: "POST" }),
-  exportWall: (id: string, name: string, faceId: number) =>
-    call<{ path: string; bytes: number; wall: number; length: number;
-           pieces: number; stats: { faces: number; volume_m3: number } }>(
-      `/projects/${id}/rooms/${encodeURIComponent(name)}/export-wall?faceId=${faceId}`,
+  exportStep: (id: string, name: string, fmt = "step", schema = "AP214") =>
+    call<{ path: string; bytes: number; format: string }>(
+      `/projects/${id}/rooms/${encodeURIComponent(name)}/export` +
+      `?fmt=${fmt}&schema=${schema}`, { method: "POST" }),
+  exportWall: (id: string, name: string, faceId: number, fmt = "step",
+               schema = "AP214") =>
+    call<{ path: string; bytes: number; format: string; wall: number;
+           length: number; pieces: number;
+           stats: { faces: number; volume_m3: number } }>(
+      `/projects/${id}/rooms/${encodeURIComponent(name)}/export-wall` +
+      `?faceId=${faceId}&fmt=${fmt}&schema=${schema}`,
       { method: "POST" }),
   exportDesignX: (id: string, name: string, fmt = "iges") =>
-    call<{ path: string; bytes: number }>(
+    call<{ path: string; bytes: number; format: string }>(
       `/projects/${id}/rooms/${encodeURIComponent(name)}/export-designx?fmt=${fmt}`,
       { method: "POST" }),
   settings: () => call<Record<string, unknown>>("/settings"),

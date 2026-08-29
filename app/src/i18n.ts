@@ -29,7 +29,10 @@ const en = {
   faces: "Faces", solid: "Solid", watertight: "watertight",
 
   tFace: "Face", tSketch: "Sketch", tOpening: "Opening", tFixture: "Fixture",
-  buildRoom: "Build", exportStep: "Export STEP", forDesignX: "For Design X",
+  buildRoom: "Build", exportStep: "Export STEP", exportRoom: "Export",
+  forDesignX: "For Design X",
+  formatHelp: "Exact B-rep only. Mesh formats would trade the surveyed corner for a triangle.",
+  schemaHelp: "STEP schema. AP242 is the current one and what SolidWorks and Design X prefer.",
 
   sketchTitle: "Edit outline",
   sketchApply: "Apply outline", sketchReset: "Reset to survey",
@@ -134,7 +137,10 @@ const tr: Record<keyof typeof en, string> = {
   faces: "Yüzey", solid: "Katı", watertight: "su geçirmez",
 
   tFace: "Yüzey", tSketch: "Çizim", tOpening: "Boşluk", tFixture: "Tesisat",
-  buildRoom: "Oluştur", exportStep: "STEP aktar", forDesignX: "Design X için",
+  buildRoom: "Oluştur", exportStep: "STEP aktar", exportRoom: "Dışa aktar",
+  forDesignX: "Design X için",
+  formatHelp: "Yalnızca tam B-rep. Mesh biçimleri ölçülen köşeyi üçgene çevirir.",
+  schemaHelp: "STEP şeması. AP242 güncel olanıdır; SolidWorks ve Design X bunu tercih eder.",
 
   sketchTitle: "Oda hattını düzenle",
   sketchApply: "Hattı uygula", sketchReset: "Ölçüme dön",

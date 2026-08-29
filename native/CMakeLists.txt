@@ -60,6 +60,9 @@ if(SNAPIR_WITH_OCCT)
   add_executable(check_openings tools/check_openings.cpp)
   target_link_libraries(check_openings PRIVATE snapir_core)
 
+  add_executable(check_export tools/check_export.cpp)
+  target_link_libraries(check_export PRIVATE snapir_core)
+
   # The sidecar the desktop app spawns. Same name and location the packaged
   # Electron shell already looks for, so main.cjs is unchanged.
   add_executable(snapir-server src/main.cpp src/service.cpp)
