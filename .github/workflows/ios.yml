@@ -1,0 +1,116 @@
+name: iOS
+
+# The repository is public, so macOS minutes are free. The cache is here for
+# iteration speed, not cost: a cold Open CASCADE cross-compile is about an hour
+# per SDK slice and there are two of them.
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - 'native/**'
+      - 'app/**'
+      - 'tools/build_ios.py'
+      - 'tools/verify_ios_sim.py'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OCCT_TAG: V7_9_3
+  FIXTURE: tests/fixtures/survey
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Tools
+        run: |
+          brew install ninja
+          xcodebuild -version
+          cmake --version
+
+      # Keyed on the build script itself: the flag list is what decides whether
+      # a cached install is still the right one.
+      - name: Cache Open CASCADE
+        id: occt
+        uses: actions/cache@v4
+        with:
+          path: |
+            .deps/occt-ios
+            .deps/occt-iossim
+          key: occt-${{ env.OCCT_TAG }}-ios-${{ hashFiles('native/build-occt-ios.sh') }}
+
+      - name: Build Open CASCADE
+        if: steps.occt.outputs.cache-hit != 'true'
+        run: bash native/build-occt-ios.sh
+
+      - name: Build the interface
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build the app
+        run: python3 tools/build_ios.py both
+
+      - name: Verify against the reference survey
+        run: |
+          set -euo pipefail
+          app="out/ios-simulator/Release-iphonesimulator/Snapir.app"
+
+          # Device type identifiers move between Xcode releases, so pick the
+          # first one actually installed rather than naming a model.
+          pick() {
+            xcrun simctl list devicetypes \
+              | grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.[^)]+' \
+              | grep -- "$1" \
+              | head -1
+          }
+
+          for want in iPad-Pro iPhone-15; do
+            type_id=$(pick "$want")
+            if [ -z "$type_id" ]; then
+              echo "No simulator device type matching $want"; exit 1
+            fi
+            echo "==> $want -> $type_id"
+
+            udid=$(xcrun simctl create "ci-$want" "$type_id")
+            # One device at a time, so 'booted' is never ambiguous.
+            xcrun simctl boot "$udid"
+            xcrun simctl bootstatus "$udid" -b
+
+            python3 tools/verify_ios_sim.py "$app" "$FIXTURE" \
+              --shot "shots/ios-$want.png"
+
+            xcrun simctl shutdown "$udid"
+            xcrun simctl delete "$udid"
+          done
+
+      - name: Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-screenshots
+          path: shots/*.png
+          if-no-files-found: warn
+
+      - name: App bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-app-unsigned
+          path: |
+            out/ios-simulator/Release-iphonesimulator/Snapir.app
+            out/ios-device/Release-iphoneos/Snapir.app

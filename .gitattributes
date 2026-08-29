@@ -1,0 +1,8 @@
+* text=auto
+
+# A CRLF shebang is a "bad interpreter" failure on the macOS runner.
+*.sh text eol=lf
+
+# The reference survey decides whether a geometry change was correct, so the
+# bytes CI reads have to be the bytes that were checked. LF, everywhere.
+tests/fixtures/survey/*.csv text eol=lf

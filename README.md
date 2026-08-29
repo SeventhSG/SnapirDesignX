@@ -10,7 +10,7 @@ shell, export STEP. 24 of the 28 rooms in the reference job build with no human
 input; the other four have real problems in the data and say so.
 
 The geometry core is C++ linked against Open CASCADE. It runs behind the
-Windows desktop app and, unchanged, inside the Android app.
+Windows desktop app and, unchanged, inside the Android app and the iOS app.
 
 ## What runs where
 
@@ -19,6 +19,7 @@ Windows desktop app and, unchanged, inside the Android app.
 | `native/` | the geometry core and the local HTTP service, C++ |
 | `app/` | the interface, React, and the Electron shell around it |
 | `android/` | the Android shell: the same service on a thread, in a WebView |
+| `ios/` | the iOS shell: the same again, in a WKWebView |
 | `snapir/` | the original Python implementation, kept as the reference |
 
 The Python package is not dead code. It is what every change to the C++ core is
@@ -44,6 +45,21 @@ python tools/build_android.py   # assets, then Gradle
 ```
 
 Needs a JDK, the Android SDK and NDK r27. `arm64-v8a` only.
+
+## Build the iOS app
+
+macOS only, so in practice this happens on the CI runner
+(`.github/workflows/ios.yml`) rather than anywhere local.
+
+```bash
+bash native/build-occt-ios.sh      # OCCT for device and simulator, static
+cd app && npm ci && npm run build  # the interface
+python3 tools/build_ios.py both    # bundle, then CMake and Xcode
+```
+
+Universal, iPad first, `arm64` only. Unsigned: there is no Apple Developer
+account, so the simulator build is the one that runs and the device build only
+proves it links.
 
 ## Check a change
 
@@ -79,6 +95,7 @@ pip install -r requirements.txt
 
 The parser and geometry layer need nothing but the standard library.
 
-See [SPEC.md](SPEC.md) for the data format and the classification rules, and
+See [SPEC.md](SPEC.md) for the data format and the classification rules,
 [docs/ANDROID.md](docs/ANDROID.md) for why the core moved to C++ and how the
-Android app is put together.
+Android app is put together, and [docs/IOS.md](docs/IOS.md) for what iOS does
+differently and why.
