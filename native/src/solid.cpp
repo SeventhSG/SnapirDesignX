@@ -13,14 +13,13 @@
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
-#include <BRepTools.hxx>
 #include <GProp_GProps.hxx>
 #include <IFSelect_ReturnStatus.hxx>
-#include <IGESControl_Controller.hxx>
-#include <IGESControl_Writer.hxx>
 #include <Interface_Static.hxx>
 #include <STEPControl_Writer.hxx>
+#include <StlAPI_Writer.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -561,14 +560,30 @@ void ensure_parent(const std::filesystem::path& out) {
   if (out.has_parent_path()) std::filesystem::create_directories(out.parent_path());
 }
 
-// IGES 5.3 solids (MSBO), not the loose trimmed surfaces mode 0 writes. A body
-// handed over as unstitched surfaces stops being a solid the moment it lands.
-std::string write_iges(const TopoDS_Shape& shape, const std::string& path) {
-  IGESControl_Controller::Init();
-  IGESControl_Writer writer("MM", 1);  // brepmode
-  if (!writer.AddShape(shape)) throw BuildError("IGES transfer failed: " + path);
-  writer.ComputeModel();
-  if (!writer.Write(path.c_str())) throw BuildError("IGES write failed: " + path);
+// Binary STL, millimetres.
+//
+// The body is almost all planar faces, and a plane tessellates to two triangles
+// whatever the deflection is asked for, so the tolerance below only ever bites
+// on the pipe stubs. A tenth of a millimetre there is far finer than anything
+// this file is meant to be used for, and costs nothing on the flat parts.
+//
+// Binary rather than ASCII: same triangles, a fifth of the size, and every
+// viewer reads it.
+constexpr double kStlDeflection = 0.1;   // mm
+constexpr double kStlAngularDeg = 15.0;  // degrees between facets on a curve
+
+std::string write_stl(const TopoDS_Shape& shape, const std::string& path) {
+  // A shape carries no triangulation until it is asked for one, and the writer
+  // will not make it. Meshing here also keeps the room's own display mesh out
+  // of it, so what is written does not depend on whether the viewport ran.
+  BRepMesh_IncrementalMesh mesher(shape, kStlDeflection, Standard_False,
+                                  kStlAngularDeg * M_PI / 180.0, Standard_True);
+  mesher.Perform();
+  if (!mesher.IsDone()) throw BuildError("STL meshing failed: " + path);
+
+  StlAPI_Writer writer;
+  writer.ASCIIMode() = Standard_False;
+  if (!writer.Write(shape, path.c_str())) throw BuildError("STL write failed: " + path);
   return path;
 }
 
@@ -576,7 +591,7 @@ std::string write_iges(const TopoDS_Shape& shape, const std::string& path) {
 
 const std::vector<ExportFormat>& export_formats() {
   static const std::vector<ExportFormat> v = {
-      {"step", ".step"}, {"iges", ".igs"}, {"brep", ".brep"}};
+      {"step", ".step"}, {"stl", ".stl"}};
   return v;
 }
 
@@ -612,14 +627,7 @@ std::string export_shape(const TopoDS_Shape& shape, const std::string& base_path
   ensure_parent(std::filesystem::u8path(path));
 
   if (fmt == "step") return export_step(shape, path, schema);
-  if (fmt == "iges") return write_iges(shape, path);
-
-  // BREP carries the kernel's own numbers with nothing in between, so it is the
-  // one format that survives a round trip untouched. It is unitless; the body
-  // is already in millimetres by the time it gets here.
-  if (!BRepTools::Write(shape, path.c_str()))
-    throw BuildError("BREP write failed: " + path);
-  return path;
+  return write_stl(shape, path);
 }
 
 int wall_index_at(const Room& room, double x_m, double y_m) {

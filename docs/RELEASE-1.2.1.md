@@ -1,54 +1,49 @@
 # Snapir Design X 1.2.1
 
-Three export formats instead of one, on all three shells. The geometry is
-untouched.
+A second way out, and the STEP schema picker that should have been there all
+along. The geometry is untouched.
 
 ## Export formats
 
-STEP was the only way out. Now there are three, and a picker beside the Export
-button to choose between them:
+STEP was the only way a body could leave. Now there are two, chosen from a
+picker beside the Export button:
 
-| Format | Extension | Opens in |
+| Format | Extension | What it is for |
 |---|---|---|
-| STEP, schema AP203 / AP214 / AP242 | `.step` | SolidWorks, Geomagic Design X, Rhino, Revit, Inventor, Fusion, CATIA |
-| IGES 5.3 solids | `.igs` | SolidWorks, Geomagic Design X, Rhino, older CAD |
-| BREP | `.brep` | Open CASCADE tools, and Snapir itself |
+| **STEP**, schema AP203 / AP214 / AP242 | `.step` | The body to work from. Exact B-rep. Opens in SolidWorks, Geomagic Design X, Rhino, Revit, Inventor, Fusion, CATIA. |
+| **STL**, binary | `.stl` | Looking at the room in something that will not open a STEP file. |
 
-The picker remembers what was chosen last, so the decision is made once. A
-second picker appears next to it when the format is STEP, for the schema.
+The picker remembers what was chosen last, so the decision is made once. Whole
+rooms and single walls both take a format.
 
-**AP242 is the reason to update.** It is the current STEP schema and the one
-SolidWorks and Design X prefer; the files Snapir wrote until now were AP214.
-The old default is unchanged, so anything already exported still matches.
+**AP242 is the other reason to update.** It is the current STEP schema and the
+one SolidWorks and Design X prefer; every file Snapir wrote until now was
+AP214, and the schema could not be changed from the app at all.
 
-Whole rooms and single walls both take the format. The Design X wireframe
-export gains BREP alongside its IGES, STEP and ASC.
+More exactly than that: the schema was never really being set. Open CASCADE
+takes it by the name of its own enum, and quietly falls back to the default
+when handed anything else — so the literal `"AP214"` in the settings had been
+doing nothing since the first release. It happened to land on the same schema,
+so nothing looked wrong. It is now set by value, and AP203 and AP242 actually
+apply.
 
-## Everything on offer is exact
+## What each format costs, measured
 
-Every format here is B-rep. Planes stay planes and the surveyed corner stays
-where the instrument put it.
-
-**No mesh format is offered, on purpose.** STL, OBJ, PLY and glTF all replace
-that corner with a triangle and a tolerance, which is the one thing this tool
-exists not to do.
-
-That is a claim, so it is checked rather than repeated. `check_export` builds
-every room in a survey, writes it in each format, reads it back through the
-same kernel, and compares the face count and the volume against the body it
-came from. Across the 28-room reference job:
+`check_export` builds every room, writes it in both formats and reads it back
+through the same kernel. The two are not held to the same standard, because
+they are not for the same thing. Across the 28-room reference job:
 
 ```
-all formats exact
+STEP exact everywhere, worst STL error 0.000013%
 ```
 
-STEP and BREP round-trip at zero volume drift. IGES loses about 1e-9 m3 to its
-own ASCII precision — a thousandth of a cubic millimetre, and the reason it is
-listed third.
+STEP returns with the same face count and zero volume drift. Any drift there
+would be a bug.
 
-IGES is written in BRep mode (5.3 MSBO) rather than the surface mode the
-wireframe export uses, so a solid arrives as a solid instead of as a heap of
-loose trimmed surfaces.
+The STL is meshed at 0.1 mm. Because these rooms are almost entirely flat, the
+triangles land nearly on the real surfaces — the worst room is out by about one
+part in eight million by volume. That is far better than an STL usually is, and
+it is still triangles: open it, turn it around, do not measure from it.
 
 ## About `.sldprt`
 
@@ -56,18 +51,15 @@ It cannot be written, by Snapir or by anything else outside SolidWorks. The
 format is closed and undocumented. Parasolid `.x_t` and ACIS `.sat` are the
 same, and additionally need a paid licence.
 
-SolidWorks imports STEP and IGES natively, so AP242 is the route in. This is
-written down in the README so it does not have to be worked out again.
+SolidWorks imports STEP natively, so AP242 is the route in. This is written
+down in the README so it does not have to be worked out again.
 
 ## PC, Android and iOS
 
-One change, three shells. The format picker is in the React app that Electron,
-the Android `WebView` and the iOS `WKWebView` all load, and the writers are in
-the C++ core all three compile. Neither mobile build file needed a line: both
-already linked `TKDEIGES` and `TKBRep`.
-
-No new Open CASCADE libraries, no OCCT rebuild, and no change to the size of
-the installer or the APK.
+One change, three shells. The picker is in the React app that Electron, the
+Android `WebView` and the iOS `WKWebView` all load, and the writer is in the
+C++ core all three compile. Each build gained one Open CASCADE toolkit,
+`TKDESTL`, and nothing else.
 
 The Android and iOS builds carry the identical core and the identical
 interface, and remain unverified on hardware.
@@ -77,5 +69,8 @@ interface, and remain unverified on hardware.
 The geometry. Same C++ core, same Open CASCADE 7.9.3, same numbers everywhere.
 A room exported with no format chosen produces the byte-for-byte file 1.2.0
 produced, so the Python-to-C++ comparison tools are unaffected.
+
+The Geomagic Design X escape hatch is also as it was: exact wireframe as IGES
+or STEP curves, plus points as ASC.
 
 Both downloads are unsigned, so each will ask once before installing.

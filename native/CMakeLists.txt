@@ -45,7 +45,7 @@ if(SNAPIR_WITH_OCCT)
   target_link_libraries(snapir_core PUBLIC
     TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep
     TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKOffset TKShHealing TKMesh
-    TKDESTEP TKDEIGES TKXSBase
+    TKDESTEP TKDEIGES TKDESTL TKXSBase
   )
   target_compile_definitions(snapir_core PUBLIC SNAPIR_WITH_OCCT=1)
 endif()

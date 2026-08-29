@@ -36,13 +36,12 @@ const ROLES: { role: string; key: Key }[] = [
   { role: "control", key: "rControl" },
 ];
 
-// Exact B-rep only. STEP and BREP round-trip through the kernel with zero
-// volume drift; IGES loses about a thousandth of a cubic millimetre to its own
-// text precision. Nothing here tessellates.
+// Two formats, for two different jobs. STEP is the body to work from and comes
+// back through the kernel exactly. STL is triangles, for opening the room in
+// something that will not read a STEP file.
 const EXPORT_FORMATS = [
   { id: "step", label: "STEP", suffix: ".step" },
-  { id: "iges", label: "IGES", suffix: ".igs" },
-  { id: "brep", label: "BREP", suffix: ".brep" },
+  { id: "stl", label: "STL", suffix: ".stl" },
 ];
 const STEP_SCHEMAS = ["AP203", "AP214", "AP242"];
 
@@ -84,8 +83,6 @@ export default function App() {
   const [look, setLook] = useState<"orbit" | "inside">("orbit");
   const [ghost, setGhost] = useState(false);
 
-  // Exact B-rep only. A mesh format cannot carry the surveyed corner back, so
-  // none is offered; see docs/APP.md.
   const [fmt, setFmt] = useState(
     () => localStorage.getItem("exportFormat") || "step");
   const [schema, setSchema] = useState(
@@ -939,7 +936,7 @@ export default function App() {
               )}
               {tab === "export" && (
                 <Row title={fmtLabel(fmt, schema)}
-                     help="Exact B-rep, millimetres, one file per room. Mesh formats are not offered: they would replace the surveyed corner with a triangle.">
+                     help="Millimetres, one file per room. STEP is the exact body to work from; STL is triangles, for viewing only.">
                   <span className="num" style={{ fontSize: 12 }}>
                     {EXPORT_FORMATS.find((f) => f.id === fmt)?.suffix}</span>
                 </Row>

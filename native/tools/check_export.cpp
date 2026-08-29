@@ -1,18 +1,21 @@
-// Proof that every offered format is exact.
+// What each export format costs, measured rather than claimed.
 //
-// The reason mesh formats are refused is that they cannot carry the surveyed
-// corner back. So the claim has to be checked, not asserted: every room is
-// built once, written in each format, read back through the same kernel, and
-// the face count and volume of the file are compared against the body it came
-// from. A format that drifts here does not belong in the menu.
+// The two formats are not checked against the same standard, because they are
+// not for the same thing:
+//
+//   STEP  is the body to work from. It has to come back exactly: same face
+//         count, same volume to the cubic millimetre. Any drift is a bug.
+//   STL   is triangles, for viewing. It cannot come back exactly and is not
+//         meant to. What matters is that the deviation is small and known, so
+//         this prints it instead of pretending it is zero.
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
 #include <string>
 
-#include <BRepTools.hxx>
-#include <BRep_Builder.hxx>
-#include <IGESControl_Reader.hxx>
+#include <Poly_Triangulation.hxx>
+#include <RWStl.hxx>
 #include <STEPControl_Reader.hxx>
 
 #include "snapir/parser.hpp"
@@ -23,9 +26,12 @@ using namespace snapir;
 
 namespace {
 
-// A face may be split on the way through a file without the body changing, so
-// volume is the number that has to hold exactly. 1e-6 m3 is a cubic millimetre.
-constexpr double kVolumeTol = 1e-6;
+// 1e-6 m3 is a cubic millimetre: the floor of what STEP is allowed to lose.
+constexpr double kStepTol = 1e-6;
+
+// A tessellation of a room that is almost entirely flat should be within a
+// hundredth of a percent. Anything worse means the deflection is wrong.
+constexpr double kStlMaxErrorPct = 0.01;
 
 std::string num(double v, int places = 9) {
   char buf[64];
@@ -33,26 +39,20 @@ std::string num(double v, int places = 9) {
   return buf;
 }
 
-TopoDS_Shape read_back(const std::string& path, const std::string& fmt) {
-  if (fmt == "step") {
-    STEPControl_Reader reader;
-    if (reader.ReadFile(path.c_str()) != IFSelect_RetDone)
-      throw std::runtime_error("STEP read failed");
-    reader.TransferRoots();
-    return reader.OneShape();
+// Volume of a closed triangle soup, by the divergence theorem. The mesh is in
+// millimetres, so the result is scaled to cubic metres to match SolidStats.
+double mesh_volume_m3(const Handle(Poly_Triangulation) & tri) {
+  if (tri.IsNull()) throw std::runtime_error("no triangulation in file");
+  double six_v = 0.0;
+  for (int i = 1; i <= tri->NbTriangles(); ++i) {
+    int a, b, c;
+    tri->Triangle(i).Get(a, b, c);
+    const gp_Pnt p = tri->Node(a), q = tri->Node(b), r = tri->Node(c);
+    six_v += p.X() * (q.Y() * r.Z() - q.Z() * r.Y()) -
+             p.Y() * (q.X() * r.Z() - q.Z() * r.X()) +
+             p.Z() * (q.X() * r.Y() - q.Y() * r.X());
   }
-  if (fmt == "iges") {
-    IGESControl_Reader reader;
-    if (reader.ReadFile(path.c_str()) != IFSelect_RetDone)
-      throw std::runtime_error("IGES read failed");
-    reader.TransferRoots();
-    return reader.OneShape();
-  }
-  TopoDS_Shape shape;
-  BRep_Builder builder;
-  if (!BRepTools::Read(shape, path.c_str(), builder))
-    throw std::runtime_error("BREP read failed");
-  return shape;
+  return std::abs(six_v) / 6.0 / 1e9;
 }
 
 }  // namespace
@@ -62,13 +62,14 @@ int main(int argc, char** argv) {
     std::cerr << "usage: check_export <folder> [out_dir]\n";
     return 2;
   }
-  const fs::path out = argc > 2 ? fs::u8path(argv[2]) : fs::temp_directory_path() /
-                                                            "snapir-check-export";
+  const fs::path out = argc > 2 ? fs::u8path(argv[2])
+                                : fs::temp_directory_path() / "snapir-check-export";
   fs::create_directories(out);
 
   const BuildSettings cfg;
   Project proj = read_project(argv[1]);
   int failures = 0;
+  double worst_stl = 0.0;
 
   for (auto& room : proj.rooms) {
     TopoDS_Shape shape;
@@ -85,14 +86,28 @@ int main(int argc, char** argv) {
       try {
         const std::string path =
             export_shape(shape, (out / fs::u8path(room.name)).u8string(), fmt);
-        const SolidStats got = solid_stats(read_back(path, fmt));
-        const double drift = std::abs(got.volume_m3 - src.volume_m3);
-        const bool ok = drift <= kVolumeTol && got.faces == src.faces;
-        if (!ok) ++failures;
-        verdict = std::string(ok ? "ok" : "DRIFT") +
-                  " faces=" + std::to_string(got.faces) + "/" +
-                  std::to_string(src.faces) + " vol=" + num(got.volume_m3) + "/" +
-                  num(src.volume_m3) + " drift=" + num(drift);
+
+        if (fmt == "step") {
+          STEPControl_Reader reader;
+          if (reader.ReadFile(path.c_str()) != IFSelect_RetDone)
+            throw std::runtime_error("STEP read failed");
+          reader.TransferRoots();
+          const SolidStats got = solid_stats(reader.OneShape());
+          const double drift = std::abs(got.volume_m3 - src.volume_m3);
+          const bool ok = drift <= kStepTol && got.faces == src.faces;
+          if (!ok) ++failures;
+          verdict = std::string(ok ? "exact" : "DRIFT") +
+                    " faces=" + std::to_string(got.faces) + "/" +
+                    std::to_string(src.faces) + " drift=" + num(drift);
+        } else {
+          const double got = mesh_volume_m3(RWStl::ReadFile(path.c_str()));
+          const double pct = std::abs(got - src.volume_m3) / src.volume_m3 * 100.0;
+          worst_stl = std::max(worst_stl, pct);
+          const bool ok = pct <= kStlMaxErrorPct;
+          if (!ok) ++failures;
+          verdict = std::string(ok ? "ok" : "COARSE") + " vol=" + num(got) + "/" +
+                    num(src.volume_m3) + " error=" + num(pct, 6) + "%";
+        }
       } catch (const std::exception& e) {
         ++failures;
         verdict = std::string("ERROR ") + e.what();
@@ -101,8 +116,10 @@ int main(int argc, char** argv) {
     }
   }
 
-  std::cout << "|summary|" << (failures ? std::to_string(failures) + " failing"
-                                        : "all formats exact")
+  std::cout << "|summary|"
+            << (failures ? std::to_string(failures) + " failing"
+                         : "STEP exact everywhere, worst STL error " +
+                               num(worst_stl, 6) + "%")
             << '\n';
   return failures ? 1 : 0;
 }

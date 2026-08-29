@@ -107,7 +107,7 @@ target_compile_options(Snapir PRIVATE -fexceptions -frtti)
 # resolves circular references between static archives on its own. Copying the
 # Android link line across verbatim fails here.
 set(OCCT_LIBS
-  TKDESTEP TKDEIGES TKDE TKXCAF TKVCAF TKCAF TKLCAF TKCDF
+  TKDESTEP TKDEIGES TKDESTL TKDE TKXCAF TKVCAF TKCAF TKLCAF TKCDF
   TKOffset TKFillet TKBool TKBO TKPrim TKShHealing TKMesh
   TKTopAlgo TKGeomAlgo TKBRep TKGeomBase TKG3d TKG2d
   TKXSBase TKMath TKernel

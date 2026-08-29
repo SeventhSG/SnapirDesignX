@@ -1,7 +1,7 @@
 # Snapir Design X
 
-Leica iCON room surveys to solid bodies. Interior volumes, exact B-rep out, no
-mesh anywhere in the chain.
+Leica iCON room surveys to solid bodies. Interior volumes, exact B-rep out, and
+an STL alongside it for viewing.
 
 ## Status
 
@@ -11,30 +11,30 @@ input; the other four have real problems in the data and say so.
 
 ## Export formats
 
-Every format on offer is exact B-rep. Planes stay planes and the surveyed
-corner stays where the instrument put it.
+Two, for two different jobs.
 
-| Format | Extension | Opens in |
+| Format | Extension | What it is for |
 |---|---|---|
-| STEP, schema AP203 / AP214 / AP242 | `.step` | SolidWorks, Geomagic Design X, Rhino, Revit, Inventor, Fusion, CATIA |
-| IGES 5.3 solids | `.igs` | SolidWorks, Geomagic Design X, Rhino, older CAD |
-| BREP | `.brep` | Open CASCADE tools, and Snapir itself |
+| **STEP**, schema AP203 / AP214 / AP242 | `.step` | The body to work from. Exact B-rep: planes stay planes and the surveyed corner stays where the instrument put it. Opens in SolidWorks, Geomagic Design X, Rhino, Revit, Inventor, Fusion, CATIA. |
+| **STL**, binary | `.stl` | Viewing the room in something that will not open a STEP file. Triangles, so nothing should be measured off it. |
 
-`native/build/check_export` proves the claim rather than repeating it: every
-room is built, written in each format, read back through the same kernel, and
-the face count and volume are compared with the body it came from. On the
-28-room reference survey STEP and BREP round-trip at zero volume drift; IGES
-loses about 1e-9 m3 to its own ASCII precision, roughly a thousandth of a cubic
-millimetre.
+`native/build/check_export` measures what each one costs rather than claiming
+it. Every room is built, written in both formats and read back through the same
+kernel. Across the 28-room reference survey:
 
-**No mesh format is offered.** STL, OBJ, PLY and glTF all replace the surveyed
-corner with a triangle and a tolerance, which is the one thing this tool exists
-not to do.
+```
+STEP exact everywhere, worst STL error 0.000013%
+```
+
+STEP returns with the same face count and zero volume drift. The STL is meshed
+at 0.1 mm, and because the rooms are almost entirely flat the triangles land
+nearly on the real surfaces — the worst room is out by about one part in eight
+million by volume. It is still triangles, and still not what to measure from.
 
 **`.sldprt` cannot be written**, by Snapir or by anything else outside
 SolidWorks: the format is closed and undocumented. The same is true of
 Parasolid `.x_t` and ACIS `.sat`, which additionally need a paid licence.
-SolidWorks imports STEP and IGES natively, so AP242 is the route in.
+SolidWorks imports STEP natively, so AP242 is the route in.
 
 The geometry core is C++ linked against Open CASCADE. It runs behind the
 Windows desktop app and, unchanged, inside the Android app and the iOS app.

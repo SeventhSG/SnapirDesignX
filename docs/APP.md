@@ -8,7 +8,7 @@
 | UI | React + TypeScript | Types catch the class of bug that makes a tool feel unreliable. |
 | Viewport | Three.js | Face picking by raycast, resolved back to real B-rep face ids. |
 | Backend | Python, bundled as a sidecar | The kernel work stays where OCCT lives. Not a website, not a localhost tab: the frontend talks to a private local process the user never sees. |
-| Kernel | OpenCASCADE via OCP | Analytic planes, exact booleans, exact B-rep out. |
+| Kernel | OpenCASCADE via OCP | Analytic planes, exact booleans, STEP and STL out. |
 
 It is a real desktop application. No browser, no URL, no server the user has to
 start.
@@ -26,7 +26,7 @@ Modelled on the Leica field platform, so it is familiar from site.
     v
   workspace       3D viewport, plan view, inspector
     v
-  export          one exact body per room: STEP, IGES or BREP
+  export          one body per room: STEP to work from, or STL to look at
 ```
 
 ### Splash
@@ -81,15 +81,14 @@ show: there is one React app behind all three shells.
 
 | Format | Extension | Notes |
 |---|---|---|
-| STEP | `.step` | Schema AP203, AP214 or AP242. AP242 is the current one and what SolidWorks and Design X prefer. |
-| IGES | `.igs` | Written in BRep mode (5.3 MSBO), so a solid arrives as a solid rather than as loose trimmed surfaces. |
-| BREP | `.brep` | Open CASCADE's own format. The only one that round-trips bit for bit; nothing outside OCCT reads it. |
+| STEP | `.step` | The body to work from. Schema AP203, AP214 or AP242; AP242 is the current one and what SolidWorks and Design X prefer. |
+| STL | `.stl` | Binary, meshed at 0.1 mm. For viewing only - it is triangles, and nothing should be measured off it. |
 
-Everything is written in millimetres. Mesh formats are deliberately absent, and
-`.sldprt` is not writable by anything outside SolidWorks - see the README.
+Both are written in millimetres. `.sldprt` is not writable by anything outside
+SolidWorks - see the README.
 
 ## Escape hatch
 
 Every room has an **Export for Geomagic Design X** action: exact wireframe as
-IGES, STEP or BREP curves, plus points as ASC. If Snapir ever gets something
-wrong, nobody is stuck.
+IGES or STEP curves, plus points as ASC. If Snapir ever gets something wrong,
+nobody is stuck.

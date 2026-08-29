@@ -10,7 +10,6 @@
 #include <vector>
 
 #include <BRepBuilderAPI_MakePolygon.hxx>
-#include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <IGESControl_Controller.hxx>
@@ -30,7 +29,7 @@ namespace {
 
 const std::map<std::string, std::string>& suffixes() {
   static const std::map<std::string, std::string> m = {
-      {"iges", ".igs"}, {"step", ".stp"}, {"brep", ".brep"}, {"asc", ".asc"}};
+      {"iges", ".igs"}, {"step", ".stp"}, {"asc", ".asc"}};
   return m;
 }
 
@@ -99,9 +98,6 @@ std::string write_curves(const Room& room, const fs::path& path,
     writer.AddShape(compound);
     writer.ComputeModel();
     if (!writer.Write(out.c_str())) throw BuildError("IGES write failed: " + out);
-  } else if (fmt == "brep") {
-    if (!BRepTools::Write(compound, out.c_str()))
-      throw BuildError("BREP write failed: " + out);
   } else {
     Interface_Static::SetCVal("write.step.unit", "MM");
     STEPControl_Writer writer;

@@ -31,7 +31,7 @@ const en = {
   tFace: "Face", tSketch: "Sketch", tOpening: "Opening", tFixture: "Fixture",
   buildRoom: "Build", exportStep: "Export STEP", exportRoom: "Export",
   forDesignX: "For Design X",
-  formatHelp: "Exact B-rep only. Mesh formats would trade the surveyed corner for a triangle.",
+  formatHelp: "STEP is the exact body to work from. STL is triangles, for viewing only.",
   schemaHelp: "STEP schema. AP242 is the current one and what SolidWorks and Design X prefer.",
 
   sketchTitle: "Edit outline",
@@ -139,7 +139,7 @@ const tr: Record<keyof typeof en, string> = {
   tFace: "Yüzey", tSketch: "Çizim", tOpening: "Boşluk", tFixture: "Tesisat",
   buildRoom: "Oluştur", exportStep: "STEP aktar", exportRoom: "Dışa aktar",
   forDesignX: "Design X için",
-  formatHelp: "Yalnızca tam B-rep. Mesh biçimleri ölçülen köşeyi üçgene çevirir.",
+  formatHelp: "STEP üzerinde çalışılacak tam gövdedir. STL üçgenlerdir, yalnızca görüntülemek içindir.",
   schemaHelp: "STEP şeması. AP242 güncel olanıdır; SolidWorks ve Design X bunu tercih eder.",
 
   sketchTitle: "Oda hattını düzenle",

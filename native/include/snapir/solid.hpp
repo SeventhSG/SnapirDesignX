@@ -72,11 +72,12 @@ SolidStats solid_stats(const TopoDS_Shape& shape);
 std::string export_step(const TopoDS_Shape& shape, const std::string& path,
                         const std::string& schema = "AP214");
 
-// Every exact format a body can be handed over in.
+// The two ways a body leaves.
 //
-// Exact means B-rep: planes stay planes and the surveyed corner stays where the
-// instrument put it. A mesh format would replace all of that with triangles and
-// a tolerance, so none is offered here on purpose.
+// STEP is the one to work from: exact B-rep, planes stay planes and the
+// surveyed corner stays where the instrument put it. STL is triangles and is
+// only for looking at the room in something that will not open a STEP file.
+// Nothing downstream should be measured off the STL.
 struct ExportFormat {
   const char* id;      // what the API and the UI call it
   const char* suffix;  // including the dot
@@ -92,7 +93,7 @@ std::string export_suffix(const std::string& fmt);
 // Write one body in millimetres. base_path carries no extension; the one for
 // the format is appended, and the written path is returned.
 //
-// schema applies to STEP only and is ignored by the other formats.
+// schema applies to STEP only and is ignored by STL.
 std::string export_shape(const TopoDS_Shape& shape, const std::string& base_path,
                          const std::string& fmt = "step",
                          const std::string& schema = "AP214");
