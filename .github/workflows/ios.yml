@@ -5,6 +5,11 @@ name: iOS
 # per SDK slice and there are two of them.
 on:
   push:
+    # Branches only. Publishing a release pushes its tag, and without this that
+    # tag push and the release event below are two runs of the same commit
+    # racing in the same concurrency group.
+    branches:
+      - main
     paths:
       - 'ios/**'
       - 'native/**'
@@ -21,7 +26,12 @@ on:
 
 concurrency:
   group: ios-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel. The Open CASCADE cross-compile is about an hour per SDK slice
+  # and actions/cache only writes at the end of a job, so a cancelled run
+  # throws the whole thing away and saves nothing -- the next run starts cold
+  # again. Cancelling on each push means the cache is never populated and no
+  # run ever finishes. Queue instead.
+  cancel-in-progress: false
 
 env:
   OCCT_TAG: V7_9_3
@@ -49,9 +59,9 @@ jobs:
 
       # Keyed on the build script itself: the flag list is what decides whether
       # a cached install is still the right one.
-      - name: Cache Open CASCADE
+      - name: Restore Open CASCADE
         id: occt
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             .deps/occt-ios
@@ -61,6 +71,19 @@ jobs:
       - name: Build Open CASCADE
         if: steps.occt.outputs.cache-hit != 'true'
         run: bash native/build-occt-ios.sh
+
+      # Saved here rather than in a post step. actions/cache only writes at the
+      # very end of a job and not at all when the job failed, so a break
+      # anywhere below this line used to throw away two hours of cross-compile
+      # and leave the next run starting cold.
+      - name: Save Open CASCADE
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .deps/occt-ios
+            .deps/occt-iossim
+          key: occt-${{ env.OCCT_TAG }}-ios-${{ hashFiles('native/build-occt-ios.sh') }}
 
       - name: Build the interface
         working-directory: app

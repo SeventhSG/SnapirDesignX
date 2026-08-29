@@ -127,6 +127,11 @@ target_link_libraries(Snapir PRIVATE
   "-framework WebKit"
   "-framework Foundation"
   "-framework UniformTypeIdentifiers"
+  # CGRectZero, CGRectGetMidX and CGRectGetMaxY live here, not in UIKit.
+  # UIKit's umbrella header declares them, so the code compiles either way;
+  # they only come up missing at link, where -dead_strip means nothing pulls
+  # CoreGraphics in on UIKit's behalf.
+  "-framework CoreGraphics"
 )
 
 set_target_properties(Snapir PROPERTIES
