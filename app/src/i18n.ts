@@ -108,6 +108,12 @@ const en = {
   cancel: "Cancel", removeIt: "Remove",
   removed: "Project removed", renamed: "Renamed",
   roomsCounted: "rooms in this folder",
+
+  flats: "Flats", flat: "Flat", allRooms: "All rooms",
+  openFlat: "Open", inThisFlat: "in this flat",
+  otherRooms: "Other rooms", switchRoom: "Switch room",
+  noPanorama: "No panorama", panoramaOf: "Panorama",
+  flatsHelp: "Every flat in this survey. Open one to see its rooms.",
 };
 
 const tr: Record<keyof typeof en, string> = {
@@ -217,6 +223,12 @@ const tr: Record<keyof typeof en, string> = {
   cancel: "Vazgeç", removeIt: "Kaldır",
   removed: "Proje kaldırıldı", renamed: "Yeniden adlandırıldı",
   roomsCounted: "oda bu klasörde",
+
+  flats: "Daireler", flat: "Daire", allRooms: "Tüm odalar",
+  openFlat: "Aç", inThisFlat: "bu dairede",
+  otherRooms: "Diğer odalar", switchRoom: "Odaya geç",
+  noPanorama: "Panorama yok", panoramaOf: "Panorama",
+  flatsHelp: "Bu ölçümdeki tüm daireler. Odalarını görmek için birini aç.",
 };
 
 export type Key = keyof typeof en;

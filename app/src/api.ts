@@ -22,6 +22,7 @@ export interface Opening {
 
 export interface Room {
   name: string; flat: string; label: string; outlineSource: string;
+  panoramas: number;
   area: number; ceilingHeight: number | null; floorZ: number | null;
   outline: string[]; points: Point[]; openings: Opening[]; issues: Issue[];
   segments: [string, string][]; links: [string, string][];
@@ -76,8 +77,14 @@ function fill(r: Room): Room {
     issues: r.issues ?? [],
     segments: r.segments ?? [],
     links: r.links ?? [],
+    panoramas: r.panoramas ?? 0,
   };
 }
+
+/** Where a room's panorama lives. Straight into an <img src>, so the
+ *  service streams it rather than the page holding it in memory twice. */
+export const panoramaUrl = (id: string, name: string, index = 0) =>
+  `${BASE}/projects/${id}/rooms/${encodeURIComponent(name)}/panorama/${index}`;
 
 export const api = {
   health: () => call<{ ok: boolean; version: string }>("/health"),

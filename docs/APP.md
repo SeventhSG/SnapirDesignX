@@ -22,7 +22,9 @@ Modelled on the Leica field platform, so it is familiar from site.
     v
   projects        open recent, or create a new project from a survey folder
     v
-  rooms           every room in the project, with its status
+  flats           one card per flat in the survey, with its room roll-up
+    v
+  rooms           the rooms in that flat, each with the panorama shot in it
     v
   workspace       3D viewport, plan view, inspector
     v
@@ -37,9 +39,18 @@ Recent projects with room count, last opened, and how many rooms still need
 review. Creating a project means pointing at a survey folder; the parser reads
 every room CSV and the project is ready.
 
+### Flats
+`Daire 51 - Salon` carries its flat in its own name, so the survey groups
+itself. One card per flat: how many rooms, and how many are ready, built or
+still need an answer. The flat number is the thing an operator hunts for from
+arm's length on site, so it is the largest text on the screen and it carries
+the gold.
+
+A survey whose rooms have no flat prefix skips this screen entirely.
+
 ### Rooms
-One card per room: area, ceiling height, opening count, and a status. Three
-states only.
+One card per room, led by a panorama out of the room's own `_Panorama` folder
+beside the CSV. Then area, ceiling height, and a status. Three states only.
 
 | State | Meaning |
 |---|---|
@@ -49,7 +60,12 @@ states only.
 
 ### Workspace
 3D viewport as the main surface, plan view alongside it, inspector on the
-right. Click a face to select it. Selection is a real B-rep face, so the
+right. Click a face to select it.
+
+The inspector runs out of readings well before it runs out of column, and the
+rest of the flat lives in that space: **Other rooms** opens the sibling rooms
+with their status, so moving between rooms in a flat does not mean walking
+back two screens. Stacked on a phone it opens as a sheet instead of a popover. Selection is a real B-rep face, so the
 inspector can say `wall, 6.81 m2, vertical` and let you set a thickness for
 that wall alone.
 
@@ -61,6 +77,30 @@ What the operator is ever asked to do:
 - override thickness on a specific wall
 
 Nothing else. Everything the data can prove, the app decides.
+
+## Panoramas
+
+The survey camera writes `<room name>_Panorama/` beside each room CSV. The
+service lists what is there and streams a shot by index; it never decodes,
+resizes or writes one. Cards load lazily and only for the flat that is open,
+so a 28-room survey never has more than a handful of 2 MB equirectangular
+JPEGs decoded at once.
+
+## Phones and tablets
+
+The page owns the whole window on all three shells, including under the
+notch, so it is the page that has to clear the hardware. `index.html` carries
+`viewport-fit=cover` -- without it WKWebView reports every
+`env(safe-area-inset-*)` as zero -- and the four insets are read once into
+`--sa-t/r/b/l`. Every piece of chrome that touches an edge adds them: the
+title bar, the page padding, the viewport's own overlay, the edit rail, the
+sketch bar, the inspector and the toast. On Windows, Android and in a desktop
+browser all four are `0px`, so the layout there is exactly what it was.
+
+`tools/shoot_layouts.js --insets` pins them to what an iPhone 15 Pro reports
+and shoots the same screens, because Chromium reports zero no matter the
+viewport and the one layout that cannot be checked here is the only one that
+ever goes wrong.
 
 ## Settings
 

@@ -5,6 +5,7 @@
 //
 // The routes, the JSON field names and the error shape are the ones the React
 // client already speaks, so the frontend is unchanged across the swap.
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -45,7 +46,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.1.1";
+constexpr const char* kVersion = "1.2.2";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -74,12 +75,50 @@ void ok_json(httplib::Response& res, const Json& j) {
   res.set_content(j.dump(), "application/json");
 }
 
+std::string ascii_upper(const std::string& v) {
+  std::string s = v;
+  for (char& c : s) {
+    const auto u = static_cast<unsigned char>(c);
+    if (u < 128) c = static_cast<char>(std::toupper(u));
+  }
+  return s;
+}
+
 bool is_room_csv(const fs::path& p) {
   if (p.extension() != ".csv") return false;
-  std::string stem = p.stem().u8string();
-  for (char& c : stem)
-    if (static_cast<unsigned char>(c) < 128) c = static_cast<char>(std::toupper(c));
-  return stem.find("FUKOKU") == std::string::npos;
+  return ascii_upper(p.stem().u8string()).find("FUKOKU") == std::string::npos;
+}
+
+// Panoramas sit in "<room name>_Panorama" beside the room CSV, straight off
+// the survey camera. The folder is only ever read, never written.
+std::vector<fs::path> panorama_files(const std::string& folder,
+                                     const std::string& room) {
+  std::vector<fs::path> out;
+  if (folder.empty()) return out;
+  const fs::path root = fs::u8path(folder);
+  if (!fs::is_directory(root)) return out;
+
+  fs::path dir = root / fs::u8path(room + "_Panorama");
+  if (!fs::is_directory(dir)) {
+    // Fall back to a case-insensitive match: the camera and the total station
+    // do not always agree on how a room name is capitalised.
+    const std::string want = ascii_upper(room + "_Panorama");
+    dir.clear();
+    for (const auto& e : fs::directory_iterator(root))
+      if (e.is_directory() && ascii_upper(e.path().filename().u8string()) == want) {
+        dir = e.path();
+        break;
+      }
+    if (dir.empty()) return out;
+  }
+
+  for (const auto& e : fs::directory_iterator(dir)) {
+    if (!e.is_regular_file()) continue;
+    const std::string ext = ascii_upper(e.path().extension().u8string());
+    if (ext == ".JPG" || ext == ".JPEG" || ext == ".PNG") out.push_back(e.path());
+  }
+  std::sort(out.begin(), out.end());
+  return out;
 }
 
 int count_room_csvs(const std::string& folder) {
@@ -319,7 +358,8 @@ Room room_or_throw(const std::string& pid, const std::string& name) {
   return apply_overrides(pid, it->second);
 }
 
-Json room_json(const Room& room, const RoomOverride* ov) {
+Json room_json(const Room& room, const RoomOverride* ov,
+               const std::string& folder) {
   double area = 0.0;
   if (room.outline.size() > 2) {
     std::vector<Pt> ring;
@@ -330,6 +370,7 @@ Json room_json(const Room& room, const RoomOverride* ov) {
   Json j;
   j["name"] = room.name;
   j["flat"] = room.flat();
+  j["panoramas"] = static_cast<int>(panorama_files(folder, room.name).size());
   j["label"] = room.label();
   j["outlineSource"] = room.outline_source;
   j["area"] = round_to(area, 3);
@@ -549,7 +590,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
       Json rooms = Json::array();
       for (const auto& kv : load_rooms(pid))
         rooms.push_back(room_json(apply_overrides(pid, kv.second),
-                                  store.override_if_any(pid, kv.first)));
+                                  store.override_if_any(pid, kv.first),
+                                  proj.folder));
 
       ok_json(res, Json{{"id", proj.id},
                         {"name", proj.name},
@@ -569,9 +611,45 @@ int serve(const std::string& host, int port, const std::string& web_root) {
             const std::string pid = req.matches[1], name = req.matches[2];
             try {
               ok_json(res, room_json(room_or_throw(pid, name),
-                                     store.override_if_any(pid, name)));
+                                     store.override_if_any(pid, name),
+                                     store.get(pid).folder));
             } catch (const std::out_of_range& e) {
               fail(res, 404, e.what());
+            } catch (const std::exception& e) {
+              fail(res, 422, e.what());
+            }
+          });
+
+  // One panorama out of the room's folder, by index. The card grid asks for
+  // 0; the viewer walks the rest. Bytes are handed over as they sit on disk --
+  // there is no image library on this side and none is wanted.
+  svr.Get(R"(/projects/([^/]+)/rooms/([^/]+)/panorama/(\d+))",
+          [&](const httplib::Request& req, httplib::Response& res) {
+            std::lock_guard<std::mutex> guard(g_lock);
+            const std::string pid = req.matches[1], name = req.matches[2];
+            const size_t index = std::stoul(req.matches[3]);
+            try {
+              const auto shots = panorama_files(store.get(pid).folder, name);
+              if (index >= shots.size()) {
+                fail(res, 404, "No panorama " + std::to_string(index) +
+                                   " for " + name);
+                return;
+              }
+              std::ifstream in(shots[index], std::ios::binary);
+              if (!in) {
+                fail(res, 404, "Could not read the panorama");
+                return;
+              }
+              std::string bytes((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+              const std::string ext = ascii_upper(shots[index].extension().u8string());
+              // The survey folder is read-only to us, so a shot never changes
+              // under a client that has already cached it.
+              res.set_header("Cache-Control", "public, max-age=31536000, immutable");
+              res.set_content(std::move(bytes),
+                              ext == ".PNG" ? "image/png" : "image/jpeg");
+            } catch (const std::out_of_range&) {
+              fail(res, 404, "No such project");
             } catch (const std::exception& e) {
               fail(res, 422, e.what());
             }
@@ -617,7 +695,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                 store.save();
                 g_rooms.erase(pid);  // force a clean re-parse
                 ok_json(res, room_json(room_or_throw(pid, name),
-                                       store.override_if_any(pid, name)));
+                                       store.override_if_any(pid, name),
+                                       store.get(pid).folder));
               } catch (const std::out_of_range& e) {
                 fail(res, 404, e.what());
               } catch (const std::exception& e) {

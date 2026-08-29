@@ -1,5 +1,6 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { api, type BuildResult, type Project, type Room } from "./api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, panoramaUrl, type BuildResult, type Project, type Room,
+         type Status } from "./api";
 import { t, type Key, type Lang } from "./i18n";
 import Sketch, { type EditMode } from "./Sketch";
 import Viewport, { ROLE_COLOR } from "./Viewport";
@@ -23,7 +24,7 @@ function Mark({ className = "mk" }: { className?: string }) {
 
 type Theme = "light" | "dark";
 
-type Screen = "launch" | "home" | "projects" | "rooms" | "work"
+type Screen = "launch" | "home" | "projects" | "rooms" | "flat" | "work"
   | "project" | "settings";
 
 /** Roles the operator can assign, in the order they appear in the picker. */
@@ -68,7 +69,9 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<{ id: string; name: string; thickness: number } | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [flat, setFlat] = useState("");        // the flat being browsed
   const [room, setRoom] = useState<Room | null>(null);
+  const [switcher, setSwitcher] = useState(false);  // sibling rooms popover
   const [result, setResult] = useState<BuildResult | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -139,6 +142,7 @@ export default function App() {
       const data = await api.rooms(id);
       setProject({ id: data.id, name: data.name, thickness: data.thickness });
       setRooms(data.rooms);
+      setFlat(data.rooms[0]?.flat ?? "");
       setScreen("rooms");
     } catch (e) { say((e as Error).message, true); }
     finally { setBusy(false); }
@@ -154,7 +158,14 @@ export default function App() {
     } catch (e) { say((e as Error).message, true); }
   };
 
+  const openFlat = (name: string) => { setFlat(name); setScreen("flat"); };
+
+  /* Back out of the workspace to wherever the room came from. */
+  const leaveRoom = () => setScreen(grouped ? "flat" : "rooms");
+
   const openRoom = async (r: Room) => {
+    setFlat(r.flat);
+    setSwitcher(false);
     setRoom(r);
     setRing(r.outline);
     setFace(null);
@@ -287,15 +298,32 @@ export default function App() {
   const selectedPoint = useMemo(
     () => room?.points.find((p) => p.name === pointName) ?? null, [room, pointName]);
 
-  const counts = useMemo(() => {
-    const c = { ready: 0, needs: 0, built: 0 };
+  const counts = useMemo(() => tally(rooms), [rooms]);
+
+  /* The survey grouped by flat, in the order the rooms were read. "Daire 51 -
+     Salon" carries its flat in its own name, so nothing has to be entered. */
+  const flats = useMemo(() => {
+    const by = new Map<string, Room[]>();
     for (const r of rooms) {
-      if (r.status === "needs-you") c.needs++;
-      else if (r.status === "built") c.built++;
-      else c.ready++;
+      const list = by.get(r.flat);
+      if (list) list.push(r);
+      else by.set(r.flat, [r]);
     }
-    return c;
+    return [...by].map(([name, rs]) => ({ name, rooms: rs, ...tally(rs) }));
   }, [rooms]);
+
+  // A survey with no flat prefix at all is one nameless group; showing a card
+  // grid of one would be silly, so that case goes straight to the rooms.
+  const grouped = flats.length > 1;
+  const flatRooms = useMemo(
+    () => (grouped ? rooms.filter((r) => r.flat === flat) : rooms),
+    [rooms, flat, grouped]);
+
+  /* Where the workspace's room switcher gets its list: everything else in the
+     same flat as the open room. */
+  const siblings = useMemo(
+    () => (room ? rooms.filter((r) => r.flat === room.flat && r.name !== room.name) : []),
+    [rooms, room]);
 
   const totalRooms = useMemo(
     () => projects.reduce((n, p) => n + p.rooms, 0), [projects]);
@@ -511,7 +539,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ---------------- rooms ---------------- */}
+        {/* ---------------- flats ---------------- */}
         {screen === "rooms" && project && (
           <div className="page">
             <div className="page-head">
@@ -525,43 +553,49 @@ export default function App() {
                   {T("projectSettings")}</button>
               </div>
             </div>
-            <table className="tbl">
-              <thead><tr>
-                <th>{T("room")}</th><th>{T("status")}</th>
-                <th className="r">{T("area")}</th><th className="r">{T("ceiling")}</th>
-                <th className="r">{T("openings")}</th><th className="r">{T("corners")}</th>
-              </tr></thead>
-              <tbody>
-                {rooms.map((r, i) => (
-                  <Fragment key={r.name}>
-                    {(i === 0 || rooms[i - 1].flat !== r.flat) && (
-                      <tr><td className="flat" colSpan={6}>{r.flat}</td></tr>
-                    )}
-                    <tr onClick={() => openRoom(r)}>
-                      <td>
-                        <b>{r.label}</b>
-                        {r.status === "needs-you" && (
-                          <small>{r.issues.some((x) => x.code === "no-ceiling")
-                            ? T("askCeiling")
-                            : r.issues.find((x) => x.severity === "error")?.message}</small>
-                        )}
-                      </td>
-                      <td>
-                        <span className={"tag " + (r.status === "built" ? "t-done"
-                          : r.status === "needs-you" ? "t-warn" : "t-ok")}>
-                          <i />{T(r.status === "built" ? "built"
-                            : r.status === "needs-you" ? "needsYou" : "ready")}
-                        </span>
-                      </td>
-                      <td className="r">{r.area.toFixed(2)} m²</td>
-                      <td className="r">{r.ceilingHeight?.toFixed(1) ?? "—"}</td>
-                      <td className="r">{r.openings.length}</td>
-                      <td className="r">{r.outline.length}</td>
-                    </tr>
-                  </Fragment>
+
+            {grouped ? (
+              <div className="flats">
+                {flats.map((f) => (
+                  <button className="fcard" key={f.name} onClick={() => openFlat(f.name)}>
+                    <b>{f.name || T("allRooms")}</b>
+                    <div className="fcard-m">
+                      <span className="num">{f.rooms.length}</span>
+                      <span>{T("rooms")}</span>
+                    </div>
+                    <div className="fcard-t">
+                      {f.built > 0 && <span className="tag t-done"><i />{f.built}</span>}
+                      {f.ready > 0 && <span className="tag t-ok"><i />{f.ready}</span>}
+                      {f.needs > 0 && <span className="tag t-warn"><i />{f.needs}</span>}
+                    </div>
+                  </button>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            ) : (
+              <div className="rooms">
+                {rooms.map((r) => (
+                  <RoomCard key={r.name} room={r} projectId={project.id} T={T}
+                            onOpen={() => openRoom(r)} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ---------------- rooms in one flat ---------------- */}
+        {screen === "flat" && project && (
+          <div className="page">
+            <div className="page-head">
+              <button className="btn q sm" onClick={() => setScreen("rooms")}>{T("back")}</button>
+              <h2 className="flatname">{flat || project.name}</h2>
+              <span className="num">{flatRooms.length} {T("rooms")}</span>
+            </div>
+            <div className="rooms">
+              {flatRooms.map((r) => (
+                <RoomCard key={r.name} room={r} projectId={project.id} T={T}
+                          onOpen={() => openRoom(r)} />
+              ))}
+            </div>
           </div>
         )}
 
@@ -641,7 +675,7 @@ export default function App() {
                   )}
                 </div>
                 <div className="acts">
-                  <button className="btn q sm" onClick={() => setScreen("rooms")}>{T("back")}</button>
+                  <button className="btn q sm" onClick={leaveRoom}>{T("back")}</button>
                   <button className="btn q sm" onClick={doDesignX}>{T("forDesignX")}</button>
                   <select className="fmt" value={fmt} title={T("formatHelp")}
                           onChange={(e) => pickFmt(e.target.value)}>
@@ -793,6 +827,35 @@ export default function App() {
                   {result.stats.solids} {T("solid")} · {result.stats.faces} {T("faces")} ·{" "}
                   <b>{T("watertight")}</b>
                 </p>
+              )}
+
+              {/* The inspector runs out of content well before it runs out of
+                  column. The rest of the flat lives in that space, so moving
+                  between rooms does not mean walking back two screens. */}
+              {siblings.length > 0 && (
+                <div className="swrooms">
+                  <button className="btn q sm wide" aria-expanded={switcher}
+                          onClick={() => setSwitcher(!switcher)}>
+                    {T("otherRooms")} <span className="num">{siblings.length}</span>
+                  </button>
+                  {switcher && (
+                    <>
+                      <div className="swback" onClick={() => setSwitcher(false)} />
+                      <div className="swpop" role="dialog" aria-label={T("switchRoom")}>
+                        <h4>{room.flat || project?.name} · {siblings.length} {T("inThisFlat")}</h4>
+                        <div className="swlist">
+                          {siblings.map((r) => (
+                            <button key={r.name} className="swrow"
+                                    onClick={() => void openRoom(r)}>
+                              <b>{r.label}</b>
+                              <StatusTag status={r.status} T={T} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
               )}
             </aside>
           </div>
@@ -963,6 +1026,66 @@ export default function App() {
 /* ---------------- small pieces ---------------- */
 
 /** Straight-line distance between the two ends of a drawn line. */
+/** The one question a room still needs answered, in the operator's words. */
+function needsReason(room: Room, T: (k: Key) => string): string {
+  return room.issues.some((x) => x.code === "no-ceiling")
+    ? T("askCeiling")
+    : room.issues.find((x) => x.severity === "error")?.message ?? "";
+}
+
+/** Ready / needs you / built, over any set of rooms. */
+function tally(rooms: Room[]) {
+  const c = { ready: 0, needs: 0, built: 0 };
+  for (const r of rooms) {
+    if (r.status === "needs-you") c.needs++;
+    else if (r.status === "built") c.built++;
+    else c.ready++;
+  }
+  return c;
+}
+
+const STATUS_TAG: Record<Status, { cls: string; key: Key }> = {
+  built: { cls: "t-done", key: "built" },
+  "needs-you": { cls: "t-warn", key: "needsYou" },
+  ready: { cls: "t-ok", key: "ready" },
+};
+
+function StatusTag({ status, T }: { status: Status; T: (k: Key) => string }) {
+  const { cls, key } = STATUS_TAG[status];
+  return <span className={"tag " + cls}><i />{T(key)}</span>;
+}
+
+/** A room as a card: the panorama the surveyor shot, and what it is. */
+function RoomCard({ room, projectId, T, onOpen }: {
+  room: Room; projectId: string; T: (k: Key) => string; onOpen: () => void;
+}) {
+  return (
+    <button className="rcard" onClick={onOpen}>
+      <div className="shot">
+        {room.panoramas > 0 ? (
+          // Loaded lazily and only for the open flat, so a 28-room survey never
+          // has more than a handful of these decoded at once.
+          <img src={panoramaUrl(projectId, room.name)} alt={T("panoramaOf")}
+               loading="lazy" decoding="async" draggable={false} />
+        ) : (
+          <span className="noshot"><Mark /><small>{T("noPanorama")}</small></span>
+        )}
+      </div>
+      <div className="rcard-b">
+        <b>{room.label}</b>
+        <div className="rcard-m">
+          <StatusTag status={room.status} T={T} />
+          <span className="num">{room.area.toFixed(2)} m²</span>
+          {room.ceilingHeight != null && (
+            <span className="num">{room.ceilingHeight.toFixed(0)} cm</span>
+          )}
+        </div>
+        {room.status === "needs-you" && <small>{needsReason(room, T)}</small>}
+      </div>
+    </button>
+  );
+}
+
 function lineLength(room: Room, seg: [string, string]): string {
   const a = room.points.find((p) => p.name === seg[0]);
   const b = room.points.find((p) => p.name === seg[1]);

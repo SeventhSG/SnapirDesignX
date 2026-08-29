@@ -13,6 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -24,7 +25,7 @@ from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.0.0")
+app = FastAPI(title="Snapir Design X", version="1.2.2")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -104,11 +105,31 @@ def _apply_overrides(pid: str, room: Room) -> Room:
     return room
 
 
-def _room_json(room: Room, ov=None) -> dict:
+def _panoramas(folder: str, room: str) -> list[Path]:
+    """Panoramas sit in "<room name>_Panorama" beside the room CSV, straight
+    off the survey camera. The folder is only ever read, never written."""
+    root = Path(folder)
+    if not root.is_dir():
+        return []
+    d = root / f"{room}_Panorama"
+    if not d.is_dir():
+        # The camera and the total station do not always agree on how a room
+        # name is capitalised.
+        want = f"{room}_Panorama".upper()
+        d = next((c for c in root.iterdir()
+                  if c.is_dir() and c.name.upper() == want), None)
+        if d is None:
+            return []
+    return sorted(p for p in d.iterdir()
+                  if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+
+
+def _room_json(room: Room, ov=None, folder: str = "") -> dict:
     area = polygon_area([p.xy for p in room.outline]) / 10_000 if len(room.outline) > 2 else 0.0
     return {
         "name": room.name,
         "flat": room.flat,
+        "panoramas": len(_panoramas(folder, room.name)),
         "label": room.label,
         "outlineSource": room.outline_source,
         "area": round(area, 3),
@@ -198,14 +219,29 @@ def project_rooms(pid: str):
     return {
         "id": proj.id, "name": proj.name, "folder": proj.folder,
         "thickness": proj.thickness,
-        "rooms": [_room_json(_apply_overrides(pid, r), proj.overrides.get(name))
+        "rooms": [_room_json(_apply_overrides(pid, r), proj.overrides.get(name),
+                             proj.folder)
                   for name, r in rooms.items()],
     }
 
 
 @app.get("/projects/{pid}/rooms/{name}")
 def get_room(pid: str, name: str):
-    return _room_json(_room(pid, name), store.get(pid).overrides.get(name))
+    proj = store.get(pid)
+    return _room_json(_room(pid, name), proj.overrides.get(name), proj.folder)
+
+
+@app.get("/projects/{pid}/rooms/{name}/panorama/{index}")
+def panorama(pid: str, name: str, index: int):
+    """One panorama out of the room's folder, by index. The card grid asks
+    for 0; the viewer walks the rest."""
+    shots = _panoramas(store.get(pid).folder, name)
+    if not 0 <= index < len(shots):
+        raise HTTPException(404, f"No panorama {index} for {name}")
+    # The survey folder is read-only to us, so a shot never changes under a
+    # client that has already cached it.
+    return FileResponse(shots[index], headers={
+        "Cache-Control": "public, max-age=31536000, immutable"})
 
 
 # ---------------------------------------------------------------- decisions
@@ -248,7 +284,7 @@ def patch_room(pid: str, name: str, body: RoomPatch):
         ov.face_thickness = {**ov.face_thickness, **body.faceThickness}
     store.save()
     _rooms.pop(pid, None)                     # force a clean re-parse
-    return _room_json(_room(pid, name), ov)
+    return _room_json(_room(pid, name), ov, store.get(pid).folder)
 
 
 class ProjectPatch(BaseModel):
