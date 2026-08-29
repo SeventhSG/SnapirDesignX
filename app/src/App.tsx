@@ -250,8 +250,14 @@ export default function App() {
 
   const saveSetting = async (k: string, v: unknown) => {
     setSettings((s) => (s ? { ...s, [k]: v } : s));
-    try { await api.patchSettings({ [k]: v }); }
-    catch (e) { say((e as Error).message, true); }
+    try {
+      await api.patchSettings({ [k]: v });
+      // Every one of these settings changes the geometry: whether openings are
+      // cut at all, how thick the shell is, whether fixtures are included. The
+      // body on screen was built under the old ones, so it is now wrong. Build
+      // it again rather than leave a stale solid the operator might export.
+      if (room && room.status !== "needs-you") await buildRoom(room);
+    } catch (e) { say((e as Error).message, true); }
   };
 
   /* ---------------- derived ---------------- */

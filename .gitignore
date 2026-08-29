@@ -11,3 +11,7 @@ app/dist/
 app/release/
 app/resources/
 packaging/build/
+
+# Open CASCADE source and build tree, fetched by native/build-full.bat
+.deps/
+native/build*/

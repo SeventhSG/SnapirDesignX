@@ -6,6 +6,7 @@
  */
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 
@@ -27,10 +28,18 @@ function backendCommand() {
     const exe = path.join(process.resourcesPath, "backend", "snapir-server.exe");
     return { cmd: exe, args: [], cwd: path.dirname(exe) };
   }
+  // In development, prefer the native backend if it has been built, so dev runs
+  // the same engine the installer ships. Fall back to the Python reference
+  // implementation when it has not.
+  const root = path.join(__dirname, "..", "..");
+  const native = path.join(root, "native", "build", "snapir-server.exe");
+  if (fs.existsSync(native)) {
+    return { cmd: native, args: [], cwd: path.dirname(native) };
+  }
   return {
     cmd: process.platform === "win32" ? "python" : "python3",
     args: ["-m", "snapir.server"],
-    cwd: path.join(__dirname, "..", ".."),
+    cwd: root,
   };
 }
 

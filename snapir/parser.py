@@ -435,6 +435,28 @@ def _from_drawn_lines(room: Room) -> bool:
         elif key in LAYER_ROLES:
             p.role = LAYER_ROLES[key]
 
+    # A surveyor who never closed a loop around a door still shot its jambs.
+    # Whatever the drawn lines did not account for gets the same clustering the
+    # inferred path uses, so an opening is not lost purely because no line was
+    # drawn round it. This runs after the layer meanings above, so a socket or a
+    # pipe is never mistaken for a jamb. Points that do not pair stay UNKNOWN
+    # and are still reported to the operator.
+    leftover = [p for p in room.points if p.role is Role.UNKNOWN]
+    if leftover and len(room.outline) >= 3:
+        jambs = []
+        for c in _cluster_xy(leftover):
+            lo, hi = min(q.z for q in c), max(q.z for q in c)
+            if len(c) >= 2 and hi - lo > MIN_JAMB_SPAN:
+                jambs.append(Jamb(
+                    x=sum(q.x for q in c) / len(c), y=sum(q.y for q in c) / len(c),
+                    z_bottom=lo, z_top=hi, points=c))
+        for a, b in _pair_jambs(jambs, [p.xy for p in room.outline]):
+            op = Opening(left=a, right=b)
+            op.infer_kind(door_sill_max=(room.floor_z or 0.0) + 20.0)
+            room.openings.append(op)
+            for q in a.points + b.points:
+                q.role = Role.OPENING
+
     room.controls = [p for p in room.points if p.role is Role.CONTROL]
     return True
 

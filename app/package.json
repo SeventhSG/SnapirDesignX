@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "concurrently -k -n vite,electron -c cyan,yellow \"vite\" \"wait-on tcp:5173 && cross-env SNAPIR_DEV=1 electron .\"",
     "build": "vite build",
-    "backend": "python -m PyInstaller --noconfirm ../packaging/backend.spec --distpath resources",
+    "backend": "python ../tools/bundle_backend.py",
     "dist": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
@@ -46,7 +46,7 @@
     ],
     "extraResources": [
       {
-        "from": "resources",
+        "from": "resources/backend",
         "to": "backend",
         "filter": [
           "**/*"

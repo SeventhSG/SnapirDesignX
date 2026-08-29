@@ -1,7 +1,9 @@
 # Moving the core to C++
 
-Status: **not now.** v1.0 ships as it is. This is the plan for when we pick it
-up, and the reasoning behind it, so neither of us has to reconstruct it later.
+Status: **stages 1 to 3 are done.** The desktop now runs the C++ core. Stages 4
+and 5, the Android half, are still open and still gated on having a device to
+test on. What follows is the original plan; what actually happened is recorded
+at the bottom, under "What we did".
 
 ## The idea
 
@@ -143,3 +145,131 @@ better and Android still open.
 If OCCT's desktop CMake build turns out to be a fight, stage 1 tells us in an
 afternoon and we have lost an afternoon. If the C++ core cannot reproduce the
 reference numbers exactly, stop: the Python one is correct and shipping.
+
+
+---
+
+# What we did
+
+Stages 1 to 3, in one sitting, on 2026-08-29. Stage 4 and 5 were not started:
+there is still no Android device here, which was open question 1 and is still
+the thing that decides whether the Android half is a port or a guess.
+
+## Stage 1: OCCT on the desktop
+
+Built OCCT **7.9.3** from source with CMake, matching the version behind the
+OCP wheel exactly so the two builds can be compared number for number. Ninja
+rather than MSBuild, which crashed on its own output pipe.
+
+The build needs **no third-party dependencies at all**: with
+`BUILD_MODULE_Visualization=OFF`, `BUILD_MODULE_Draw=OFF` and every `USE_*` off,
+freetype, tcl/tk, rapidjson and the rest drop out. That is the whole reason the
+result came in far under the estimate, and it is the same configuration that
+will cross-compile for `arm64-v8a`.
+
+    .deps/occt   47 toolkits, 117 MB
+
+This was billed as the only step that could fail in an interesting way. It
+configured and built first time.
+
+## Stage 2: the port, checked against the Python build
+
+2403 lines of Python became roughly 2600 lines of C++ in `native/`. Both
+substitutions the plan called for went in:
+
+- **numpy SVD** → Jacobi rotation on the 3x3 covariance, in `planes.cpp`.
+- **shapely** → the mitre solver that already existed in `wall_body`, plus a
+  ray-cast point-in-polygon, in `solid.cpp`.
+
+Verification runs in two halves, so the classifier is proven before the kernel
+is involved at all. Both dump one line per field per room; the Python side is
+`tools/dump_parse.py` and `tools/dump_solid.py`, the C++ side is the matching
+tools in `native/tools`.
+
+| Half | Result over the 28 reference rooms |
+|---|---|
+| Parser, topology, geometry, planes | **1637 fields exact, 0 mismatches** |
+| Solids | **23 of 24 buildable rooms identical to 0.0000 cm3** |
+| Wall tiling | **0.000000 cm3** across all 23, the property the plan named |
+| The 4 rooms that cannot build | fail in C++ with the same messages |
+| `Daire 53 - Salon` | 1 solid, 123 faces, 20.922131 m3 |
+
+Two things came out of the comparison that were not expected.
+
+**The Python build is not reproducible.** Two runs of `dump_parse.py` differ by
+180 lines. `_walk_cycle` picks its starting direction out of a `set`, and string
+hashing is randomised per process, so a room's ring can come back either way
+round between runs. The C++ walk sorts, and is deterministic. Rings are
+therefore compared up to direction and signed area by magnitude; every
+coordinate, role, opening and issue is still compared exactly.
+
+**One room differs, and we accepted it.** `Daire 51 - Ebeveyn odası`, 71 faces
+against 70, and 629 cm3 of 16.38 m3, which is 0.004%. The cause is two surveyed
+corners **0.8 mm apart** on a near-straight run, at 171.2 degrees and 186.0
+degrees. Offsetting outward by 20 cm, shapely's `buffer` dissolves the pair into
+one vertex; the mitre solver keeps both, at 20.056 and 20.031 cm perpendicular,
+which is correct for those angles. Shapely's merged vertex sits about a
+centimetre from either mitre vertex, so no tolerance reproduces it: it is
+cleanup, not a formula.
+
+We kept the mitre result. It is the exact offset of the surveyed outline, it
+leaves the outer ring with the same corner count as the inner one rather than
+one fewer, and it is deterministic. The wall bodies for that room are identical
+either way; the difference lives only in the shell's outer corner filler.
+
+## Stage 3: the desktop swap
+
+`server.py` and `store.py` are ported. `store.cpp` reads and writes the same
+`projects.json` the Python build wrote, so existing projects keep working across
+the swap, including the centimetre-to-millimetre migration for old files. Two
+vendored single headers do the plumbing: cpp-httplib 0.18.3 and nlohmann/json
+3.11.3, both in `native/third_party`.
+
+The frontend is unchanged, which was the point. `tools/compare_servers.py`
+drives both sidecars through the same calls and diffs the JSON:
+
+    268 checks, 5 failures - all five the accepted corner above
+
+That covers every route, all 28 rooms, build, export, Design X export, a patch
+round trip, and the 404 and 400 paths.
+
+One rounding bug was found by that comparison and fixed. Python's `round()`
+rounds the exact value of the double; scaling by a power of ten first does not.
+207.95 is really 207.9499999..., but `207.95 * 10` lands on exactly 2079.5 and
+then rounds the wrong way. Formatting to the requested number of places rounds
+the exact value, which is the same rule Python uses.
+
+The packaged sidecar also used to land at `resources/backend/backend/`, one
+directory below where `main.cjs` looks for it. That is fixed in the
+`extraResources` mapping. Development now prefers the native backend when it has
+been built, so dev and the installer run the same engine.
+
+## What it cost, against the estimate
+
+| | Before | After |
+|---|---|---|
+| Backend on disk | 358 MB | **46.8 MB** |
+| Installer | 147.8 MB | **87.2 MB** |
+| Dependencies | Python 3.11+, PyInstaller, OCP wheel, shapely, numpy | none |
+| Startup | interpreter, imports, then OCCT | process start |
+| 28 rooms, parse and build | 34.0 s | 30.0 s |
+
+46.8 MB is well under the 80-120 MB the plan guessed, because none of the
+visualization toolkits ship. That also answers open question 2 in advance: the
+kernel is not too large for a phone.
+
+The packaged app was launched and its bundled backend answered on 8765, served
+all 28 rooms, and rebuilt `Daire 53 - Salon` to 123 faces and 20.922131 m3.
+
+## What is left for Android
+
+Stages 4 and 5, unchanged, and still gated on the same thing:
+
+4. Build OCCT for `arm64-v8a`. The desktop CMake configuration carries over as
+   is, and needs no third-party libraries, which was the part most likely to
+   fight back.
+5. Android shell, JNI bridge, WebView, APK.
+
+Nothing on this machine can do stage 5 honestly today: no JDK, no SDK, no NDK,
+no device. The geometry, though, is now proven, so Android is a packaging
+problem rather than a rewrite, which is exactly what stages 1 to 3 were for.

@@ -342,8 +342,12 @@ def export(pid: str, name: str):
     room = _room(pid, name)
     cfg = _settings(pid)
     out = Path(proj.folder) / "Snapir STEP"
+    ov_in = store.get(pid).overrides.get(name)
     try:
-        shape = _quiet(build_room, room, cfg)
+        # Same fixture decisions the preview was built with, so the file on disk
+        # is the body that was approved on screen.
+        shape = _quiet(build_room, room, cfg,
+                       fixture_overrides=ov_in.fixture_overrides if ov_in else None)
         path = _quiet(export_step, shape, out / f"{name}.step", cfg.step_schema)
     except BuildError as e:
         raise HTTPException(422, str(e))
