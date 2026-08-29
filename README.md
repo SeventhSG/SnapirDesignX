@@ -6,33 +6,79 @@ anywhere in the chain.
 ## Status
 
 Working end to end on real survey data: parse, classify, fit planes, build the
-shell, export STEP. 21 of 28 rooms in the reference job build with no human
-input. Desktop frontend in progress.
+shell, export STEP. 24 of the 28 rooms in the reference job build with no human
+input; the other four have real problems in the data and say so.
 
-## Try the parser
+The geometry core is C++ linked against Open CASCADE. It runs behind the
+Windows desktop app and, unchanged, inside the Android app.
+
+## What runs where
+
+| | |
+|---|---|
+| `native/` | the geometry core and the local HTTP service, C++ |
+| `app/` | the interface, React, and the Electron shell around it |
+| `android/` | the Android shell: the same service on a thread, in a WebView |
+| `snapir/` | the original Python implementation, kept as the reference |
+
+The Python package is not dead code. It is what every change to the C++ core is
+checked against, room by room, by the three tools in `tools/`.
+
+## Build the desktop app
 
 ```bash
-python tools/scan.py "C:/path/to/survey/folder"
+native\build-full.bat           # OCCT for Windows, then the core and sidecar
+python tools/bundle_backend.py  # stage the sidecar for the installer
+cd app && npm install && npm run dist
 ```
 
-Prints a per-room report: outline points, floor area, ceiling height, openings
-found, and anything that needs an operator decision.
+The first run of `build-full.bat` clones and builds Open CASCADE 7.9.3, which
+takes a while. Everything after it is quick.
 
-## Build the solids
+## Build the Android app
 
 ```bash
-python tools/build.py "C:/path/to/survey/folder" out
+native\build-occt-android.bat   # OCCT for arm64-v8a, static
+cd app && npm run build         # the interface
+python tools/build_android.py   # assets, then Gradle
 ```
 
-Writes one STEP body per room.
+Needs a JDK, the Android SDK and NDK r27. `arm64-v8a` only.
+
+## Check a change
+
+Nothing in the geometry core is trusted until it reproduces the Python build
+over the reference survey:
+
+```bash
+python tools/dump_parse.py "C:/path/to/survey" > py.txt
+native\build\dump_parse.exe "C:/path/to/survey" > cpp.txt
+python tools/compare_dumps.py py.txt cpp.txt
+
+python tools/compare_servers.py http://127.0.0.1:8767 http://127.0.0.1:8766 "C:/path/to/survey"
+```
+
+`tools/dump_solid.py` and `native\build\dump_solid.exe` do the same for solids,
+volumes and the wall tiling. `native\build\check_openings.exe` reports any door
+or window that was found but carved nothing.
+
+## Command line
+
+```bash
+python tools/scan.py "C:/path/to/survey/folder"    # per-room report
+python tools/build.py "C:/path/to/survey/folder" out   # one STEP body per room
+```
 
 ## Requirements
+
+Python 3.11 or newer for the reference implementation and the tools:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Python 3.11 or newer. The parser and geometry layer need nothing but the
-standard library.
+The parser and geometry layer need nothing but the standard library.
 
-See [SPEC.md](SPEC.md) for the data format and the classification rules.
+See [SPEC.md](SPEC.md) for the data format and the classification rules, and
+[docs/ANDROID.md](docs/ANDROID.md) for why the core moved to C++ and how the
+Android app is put together.

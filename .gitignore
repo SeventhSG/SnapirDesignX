@@ -15,3 +15,10 @@ packaging/build/
 # Open CASCADE source and build tree, fetched by native/build-full.bat
 .deps/
 native/build*/
+
+# Android: SDK location is per-machine, and the interface in assets is a copy
+# of app/dist staged by tools/build_android.py.
+android/.gradle/
+android/local.properties
+android/app/src/main/assets/web/
+android/app/.cxx/

@@ -1,5 +1,6 @@
 #include "snapir/tessellate.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include <BRepAdaptor_Surface.hxx>

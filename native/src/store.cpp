@@ -1,6 +1,7 @@
 #include "snapir/store.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>

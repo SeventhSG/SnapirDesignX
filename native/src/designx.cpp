@@ -1,6 +1,7 @@
 #include "snapir/designx.hpp"
 
 #include <array>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>

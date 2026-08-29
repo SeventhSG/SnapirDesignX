@@ -62,7 +62,7 @@ if(SNAPIR_WITH_OCCT)
 
   # The sidecar the desktop app spawns. Same name and location the packaged
   # Electron shell already looks for, so main.cjs is unchanged.
-  add_executable(snapir-server src/server.cpp)
+  add_executable(snapir-server src/main.cpp src/service.cpp)
   target_link_libraries(snapir-server PRIVATE snapir_core)
   if(WIN32)
     target_link_libraries(snapir-server PRIVATE ws2_32 crypt32)

@@ -23,6 +23,8 @@
 #define NOMINMAX
 #include <windows.h>
 #include <process.h>
+#else
+#include <unistd.h>
 #endif
 #include "../third_party/httplib.h"
 
@@ -30,6 +32,7 @@
 #include <Message_Messenger.hxx>
 #include <Message_PrinterOStream.hxx>
 #include "snapir/designx.hpp"
+#include "snapir/service.hpp"
 #include "snapir/geometry.hpp"
 #include "snapir/parser.hpp"
 #include "snapir/settings.hpp"
@@ -42,7 +45,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.0.0";
+constexpr const char* kVersion = "1.1.0";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -429,15 +432,9 @@ long long file_size_of(const std::string& path) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-  std::string host = "127.0.0.1";
-  int port = 8765;
-  for (int i = 1; i < argc; ++i) {
-    const std::string a = argv[i];
-    if (a == "--host" && i + 1 < argc) host = argv[++i];
-    else if (a == "--port" && i + 1 < argc) port = std::atoi(argv[++i]);
-  }
+namespace snapir {
 
+int serve(const std::string& host, int port, const std::string& web_root) {
   // OCCT writes progress banners to stdout. Keep them out of the API.
   Message::DefaultMessenger()->RemovePrinters(STANDARD_TYPE(Message_PrinterOStream));
 
@@ -780,9 +777,25 @@ int main(int argc, char** argv) {
              }
            });
 
+  // On Android the same service also serves the interface, so the page and the
+  // API share an origin and there is no file:// or mixed-content problem to
+  // work around. On the desktop, Electron loads the interface itself and this
+  // is left empty.
+  if (!web_root.empty()) {
+    svr.set_mount_point("/", web_root.c_str());
+    svr.Get("/", [web_root](const httplib::Request&, httplib::Response& res) {
+      std::ifstream fh(fs::u8path(web_root) / "index.html", std::ios::binary);
+      std::stringstream ss;
+      ss << fh.rdbuf();
+      res.set_content(ss.str(), "text/html");
+    });
+  }
+
   if (!svr.listen(host.c_str(), port)) {
     std::fprintf(stderr, "snapir-server: could not bind %s:%d\n", host.c_str(), port);
     return 1;
   }
   return 0;
 }
+
+}  // namespace snapir

@@ -1,9 +1,8 @@
 # Moving the core to C++
 
-Status: **stages 1 to 3 are done.** The desktop now runs the C++ core. Stages 4
-and 5, the Android half, are still open and still gated on having a device to
-test on. What follows is the original plan; what actually happened is recorded
-at the bottom, under "What we did".
+Status: **done.** All five stages. The desktop runs the C++ core, and the same
+core runs on Android. What follows is the original plan; what actually happened
+is recorded at the bottom, under "What we did".
 
 ## The idea
 
@@ -261,15 +260,74 @@ kernel is not too large for a phone.
 The packaged app was launched and its bundled backend answered on 8765, served
 all 28 rooms, and rebuilt `Daire 53 - Salon` to 123 faces and 20.922131 m3.
 
-## What is left for Android
+## Stage 4: OCCT for arm64-v8a
 
-Stages 4 and 5, unchanged, and still gated on the same thing:
+The desktop CMake configuration carried over unchanged, which is exactly what
+turning the third-party dependencies off had bought us: nothing to cross-compile
+first. Two flags differ.
 
-4. Build OCCT for `arm64-v8a`. The desktop CMake configuration carries over as
-   is, and needs no third-party libraries, which was the part most likely to
-   fight back.
-5. Android shell, JNI bridge, WebView, APK.
+    -DCMAKE_TOOLCHAIN_FILE=<ndk>/build/cmake/android.toolchain.cmake
+    -DANDROID_ABI=arm64-v8a  -DANDROID_PLATFORM=android-26
+    -DBUILD_LIBRARY_TYPE=Static
+    -DINSTALL_DIR_LAYOUT=Unix
 
-Nothing on this machine can do stage 5 honestly today: no JDK, no SDK, no NDK,
-no device. The geometry, though, is now proven, so Android is a packaging
-problem rather than a rewrite, which is exactly what stages 1 to 3 were for.
+Static rather than shared, so the app ships one `.so` instead of forty-odd, and
+the linker drops the toolkit code nothing calls. `native/build-occt-android.bat`
+is the whole recipe.
+
+`arm64-v8a` only. It is every phone worth surveying with, and building the other
+three ABIs would multiply the longest step in the whole job by four.
+
+## Stage 5: the Android shell
+
+The shell is deliberately thin, and the reason is worth stating, because it is
+the decision that made the Android half a day rather than a week.
+
+**There is no per-endpoint JNI bridge.** The plan drew one, but the service is
+already a narrow HTTP API on loopback that the interface has spoken since the
+desktop build. So the phone runs the *same server*, on a thread, and the WebView
+talks to it exactly as the Electron window did. One implementation of every
+route, nothing to keep in sync, and the whole comparison suite that verified the
+desktop covers the phone too.
+
+`server.cpp` became `service.cpp` plus a five-line `main.cpp`, so the desktop
+sidecar and the Android thread call the same `snapir::serve()`.
+
+**The service also serves the interface.** Loading the page from `file://` would
+put it on a null origin and every call to the backend would be a cross-origin
+request into a WebView that blocks them; serving the page from
+`appassets.androidplatform.net` instead would make the backend call mixed
+content. Serving both from `127.0.0.1:8765` removes the problem rather than
+working around it. The built React bundle is unpacked out of the APK on first
+run and handed to the same `httplib` server as a mount point.
+
+The Java side is four small files:
+
+| | |
+|---|---|
+| `MainActivity` | unpack, start, show a WebView |
+| `NativeService` | load `libsnapir.so`, start the service, wait for the port |
+| `WebAssets` | unpack the interface, inject the `window.snapir` shim |
+| `WebBridge` + `FolderPicker` | the same bridge the Electron preload exposes |
+
+`WebAssets` injects a `window.snapir` object identical in shape to the one
+`preload.cjs` exposes, so **not one line of the React app knows it is on a
+phone**. `api` becomes `location.origin`, `pickFolder` opens a directory
+browser, `reveal` becomes a toast.
+
+The folder picker walks real directories rather than using the system document
+picker, because the picker returns `content://` URIs and the geometry core opens
+files with the standard library. That is also what lets the same parser read the
+same CSVs on both platforms. It needs All files access, which on Android 11 and
+up only the user can grant, in Settings.
+
+## What is not verified
+
+There is no Android device on this machine, which was open question 1 and stayed
+open. The APK builds, links and installs its own assets, and every line of
+geometry in it is the code the desktop comparison proved room by room. What has
+**not** been exercised is the phone itself: the WebView, the storage permission,
+the folder picker, and the service coming up under Android's process lifecycle.
+
+That is the honest boundary. The geometry is proven; the shell around it is
+not run until someone installs it.

@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.snapirdesign.designx'
+    compileSdk 34
+    ndkVersion "27.0.12077973"
+
+    defaultConfig {
+        applicationId "com.snapirdesign.designx"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.1.0"
+
+        // The geometry kernel is built for 64-bit ARM only. That is every
+        // Android phone worth surveying with, and building the other three
+        // would quadruple an already long OCCT cross-compile.
+        ndk { abiFilters 'arm64-v8a' }
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared',
+                          "-DOCCT_ANDROID_ROOT=${rootProject.file('../.deps/occt-android').absolutePath}",
+                          "-DSNAPIR_NATIVE_ROOT=${rootProject.file('../native').absolutePath}"
+                cppFlags '-std=c++17', '-fexceptions', '-frtti'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        jniLibs { useLegacyPackaging false }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+}
