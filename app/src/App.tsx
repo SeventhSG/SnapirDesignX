@@ -4,7 +4,7 @@ import { api, panoramaUrl, type BuildResult, type Project, type Room,
 import { t, type Key, type Lang } from "./i18n";
 import Sketch, { type EditMode } from "./Sketch";
 import Viewport, { ROLE_COLOR } from "./Viewport";
-import { solveRoom, columnOf, COLUMNS, type Pose } from "./panorama";
+import { solveRoom, type Pose } from "./panorama";
 
 const bridge = (window as any).snapir;
 
@@ -93,6 +93,7 @@ export default function App() {
   const [panoOpen, setPanoOpen] = useState(false);
   const [eye, setEye] = useState<{ yaw: number; at: number | null }>(
     { yaw: 0, at: null });
+  const [panoWarn, setPanoWarn] = useState(false);
 
   /* The ring you may walk inside, and the setups you may stand at. */
   const bounds = useMemo<[number, number][]>(() => {
@@ -113,10 +114,7 @@ export default function App() {
   const panoUrl = project && room && room.panoramas > 0
     ? panoramaUrl(project.id, room.name, pose ? pose.panorama : 0)
     : null;
-  /* Yaw zero looks along survey +Y, which is a quarter turn from azimuth zero. */
-  const chipU = pose
-    ? columnOf(eye.yaw + Math.PI / 2, pose.heading) / COLUMNS
-    : 0;
+
 
   const [fmt, setFmt] = useState(
     () => localStorage.getItem("exportFormat") || "step");
@@ -166,6 +164,21 @@ export default function App() {
     } catch (e) { setBootError(String((e as Error).message)); }
   }, []);
   useEffect(() => { void boot(); }, [boot]);
+
+  /* Leaving the inside view puts the model back: the photograph is only
+     meaningful from where it was taken. */
+  useEffect(() => {
+    if (look !== "inside") setPanoOpen(false);
+  }, [look]);
+
+  /* A photograph that could not be lined up says so on opening and then stops
+     saying it. Standing in a permanent warning helps nobody. */
+  useEffect(() => {
+    if (!panoOpen || pose) { setPanoWarn(false); return; }
+    setPanoWarn(true);
+    const t = setTimeout(() => setPanoWarn(false), 5000);
+    return () => clearTimeout(t);
+  }, [panoOpen, pose]);
 
   /* The panorama's heading is in none of the survey files, so it is recovered
      from the picture itself the first time a room is opened. One decode per
@@ -664,6 +677,7 @@ export default function App() {
                   dark={dark}
                   bounds={bounds}
                   stations={posts}
+                  floorZ={room.floorZ}
                   pano={panoUrl
                     ? { url: panoUrl, heading: pose?.heading ?? 0,
                         station: pose?.station ?? 0 }
@@ -697,30 +711,13 @@ export default function App() {
                   {inSketch
                     ? (edit === "outline" ? T("ringHelp")
                        : edit === "line" ? T("lineHelp") : T("layerHelp"))
-                    : look === "inside" ? T("insideHint") : room.name}
+                    : look === "inside" && !panoOpen ? T("insideHint")
+                    : room.name}
                 </span>
-                {!inSketch && look === "inside" && result && panoUrl && (
-                  panoOpen ? (
-                    <div className="panobar">
-                      <button className="btn q sm"
-                              onClick={() => setPanoOpen(false)}>
-                        {T("panoBack")}
-                      </button>
-                      {!pose && <span className="tag t-warn"><i />{T("panoFree")}</span>}
-                    </div>
-                  ) : (
-                    <button className={pose ? "panochip" : "panochip cold"}
-                            onClick={() => setPanoOpen(true)}>
-                      <span className="strip" style={{
-                        backgroundImage: `url(${panoUrl})`,
-                        /* The strip shows a quarter of the sphere, centred on
-                           whatever the eye is pointing at. */
-                        backgroundPositionX: `${((4 * chipU - 0.5) * 100) / 3}%`,
-                      }} />
-                      <small>{solving ? T("panoSolving")
-                        : pose ? T("panoView") : T("panoUnaligned")}</small>
-                    </button>
-                  )
+                {/* A photograph that could not be lined up says so once, then
+                    gets out of the way and leaves a plain 360 view. */}
+                {panoOpen && panoWarn && (
+                  <div className="panowarn" role="status">{T("panoUnaligned")}</div>
                 )}
                 <div className="tools">
                   <div className="seg quiet">
@@ -738,6 +735,15 @@ export default function App() {
                         <button aria-pressed={look === "inside"}
                                 onClick={() => setLook("inside")}>{T("vInside")}</button>
                       </div>
+                      {look === "inside" && panoUrl && (
+                        <div className="seg quiet">
+                          <button aria-pressed={panoOpen} disabled={solving}
+                                  className={!solving && !pose ? "cold" : undefined}
+                                  title={solving ? T("panoSolving") : undefined}
+                                  onClick={() => setPanoOpen(!panoOpen)}>
+                            {T("vPano")}</button>
+                        </div>
+                      )}
                       <div className="seg quiet">
                         <button aria-pressed={ghost}
                                 onClick={() => setGhost(!ghost)}>{T("vGhost")}</button>

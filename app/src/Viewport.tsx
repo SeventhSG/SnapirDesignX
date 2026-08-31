@@ -78,6 +78,9 @@ interface Props {
   dark?: boolean;
   /** The floor ring in survey centimetres. Inside it is where you may walk. */
   bounds?: [number, number][];
+  /** The floor datum in survey centimetres. Not the bottom of the body: the
+   *  slab hangs below it, and standing on that is standing underground. */
+  floorZ?: number | null;
   /** Where the instrument stood, survey centimetres. Somewhere to stand. */
   stations?: [number, number, number][];
   /** The panorama for the station being stood at, once its heading solved. */
@@ -137,7 +140,7 @@ const CM = 0.01;                       // survey centimetres to scene metres
 
 export default function Viewport({
   mesh, selected, onSelect, sketch, look = "orbit", ghost = false, dark = false,
-  bounds, stations, pano = null, panoOpen = false, onLook,
+  bounds, stations, floorZ, pano = null, panoOpen = false, onLook,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const S = useRef<Scene>();
@@ -262,8 +265,8 @@ export default function Viewport({
     // exactly where the instrument put it.
     s.centre.copy(c);
 
-    // Eye height inside the room: 1.6 m above the floor, on the room's axis.
-    // Survey Z becomes world Y once the pivot has rotated the group.
+    // The bottom of the body is the underside of the floor slab, which is not
+    // a floor to stand on. It is only a fallback for a room with no datum.
     const halfH = (bb.max.z - bb.min.z) / 2;
     s.floorY = -halfH;
     s.eye.set(0, s.floorY + 1.6, 0);
@@ -452,6 +455,12 @@ export default function Viewport({
     const s = S.current;
     if (!s || !mesh) return;
 
+    // The surveyed floor datum, which is where a person actually stands. The
+    // slab is built downward from it, so the body's own underside is lower by
+    // the slab thickness -- a station disc placed there is inside the concrete
+    // and only shows once the body is made transparent.
+    if (floorZ != null) s.floorY = toWorld(s, 0, 0, floorZ).y;
+
     s.fence = (bounds ?? []).map(([x, y]) => {
       const w = toWorld(s, x, y, 0);
       return [w.x, w.z] as [number, number];
@@ -476,13 +485,13 @@ export default function Viewport({
         })
       );
       disc.rotation.x = -Math.PI / 2;
-      disc.position.set(post.x, s.floorY + 0.012, post.z);
+      disc.position.set(post.x, s.floorY + 0.015, post.z);
       disc.renderOrder = 3;
       disc.userData.post = i;
       s.scene.add(disc);
       s.markers.push(disc);
     });
-  }, [bounds, stations, mesh]);
+  }, [bounds, stations, floorZ, mesh]);
 
   /* ---------------- the photograph ---------------- */
   useEffect(() => {

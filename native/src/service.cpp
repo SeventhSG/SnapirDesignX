@@ -46,7 +46,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.2.3";
+constexpr const char* kVersion = "1.2.4";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
