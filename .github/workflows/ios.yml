@@ -153,9 +153,12 @@ jobs:
           app="out/ios-device/Release-iphoneos/Snapir.app"
           test -d "$app" || { echo "No device build at $app"; exit 1; }
 
-          # Refuse to ship a simulator slice dressed up as an .ipa.
-          if ! vtool -show-build "$app/Snapir" 2>/dev/null | grep -q "platform IOS"; then
-            echo "$app is not an iOS device binary:"
+          # Refuse to ship a simulator slice dressed up as an .ipa. Anchored:
+          # a simulator build says IOSSIMULATOR, which "platform IOS" on its
+          # own would happily match.
+          platform=$(vtool -show-build "$app/Snapir" 2>/dev/null | awk '$1=="platform"{print $2}')
+          if [ "$platform" != "IOS" ]; then
+            echo "$app is not an iOS device binary (platform=$platform):"
             vtool -show-build "$app/Snapir" || true
             exit 1
           fi
@@ -181,7 +184,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}"             SnapirDesignX-*.ipa --clobber
+          gh release upload "${{ github.event.release.tag_name }}" SnapirDesignX-*.ipa --clobber
 
       - name: App bundles
         uses: actions/upload-artifact@v4
