@@ -25,7 +25,7 @@ from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.2.2")
+app = FastAPI(title="Snapir Design X", version="1.2.3")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -141,6 +141,10 @@ def _room_json(room: Room, ov=None, folder: str = "") -> dict:
         "links": [list(l) for l in room.links],
         "points": [{"name": p.name, "x": p.x, "y": p.y, "z": p.z,
                     "role": p.role.value, "layer": p.layer} for p in room.points],
+        # Where the instrument stood. One setup per panorama, so this is also
+        # where each panorama was shot from.
+        "stations": [{"name": s.name, "x": s.x, "y": s.y, "z": s.z}
+                     for s in room.stations],
         "openings": [{
             "index": i, "kind": o.kind, "width": round(o.width, 1),
             "sill": round(o.sill, 1), "head": round(o.head, 1),

@@ -4,6 +4,7 @@ import { api, panoramaUrl, type BuildResult, type Project, type Room,
 import { t, type Key, type Lang } from "./i18n";
 import Sketch, { type EditMode } from "./Sketch";
 import Viewport, { ROLE_COLOR } from "./Viewport";
+import { solveRoom, columnOf, COLUMNS, type Pose } from "./panorama";
 
 const bridge = (window as any).snapir;
 
@@ -85,6 +86,37 @@ export default function App() {
   const [pointName, setPointName] = useState<string | null>(null);
   const [look, setLook] = useState<"orbit" | "inside">("orbit");
   const [ghost, setGhost] = useState(false);
+  /* The panoramas whose heading was recovered, where the eye is standing now,
+     and whether the photograph is up instead of the body. */
+  const [poses, setPoses] = useState<Pose[]>([]);
+  const [solving, setSolving] = useState(false);
+  const [panoOpen, setPanoOpen] = useState(false);
+  const [eye, setEye] = useState<{ yaw: number; at: number | null }>(
+    { yaw: 0, at: null });
+
+  /* The ring you may walk inside, and the setups you may stand at. */
+  const bounds = useMemo<[number, number][]>(() => {
+    if (!room) return [];
+    const named = new Map(room.points.map((p) => [p.name, p]));
+    return room.outline
+      .map((n) => named.get(n))
+      .filter((p): p is NonNullable<typeof p> => !!p)
+      .map((p) => [p.x, p.y] as [number, number]);
+  }, [room]);
+  const posts = useMemo<[number, number, number][]>(
+    () => (room?.stations ?? []).map((s) => [s.x, s.y, s.z]), [room]);
+
+  /* The shot for wherever the eye is standing, and where in it we are looking.
+     A room with no solved pose still gets its picture; it just does not claim
+     to know which way round it is. */
+  const pose = poses.find((p) => p.station === (eye.at ?? 0)) ?? poses[0] ?? null;
+  const panoUrl = project && room && room.panoramas > 0
+    ? panoramaUrl(project.id, room.name, pose ? pose.panorama : 0)
+    : null;
+  /* Yaw zero looks along survey +Y, which is a quarter turn from azimuth zero. */
+  const chipU = pose
+    ? columnOf(eye.yaw + Math.PI / 2, pose.heading) / COLUMNS
+    : 0;
 
   const [fmt, setFmt] = useState(
     () => localStorage.getItem("exportFormat") || "step");
@@ -134,6 +166,24 @@ export default function App() {
     } catch (e) { setBootError(String((e as Error).message)); }
   }, []);
   useEffect(() => { void boot(); }, [boot]);
+
+  /* The panorama's heading is in none of the survey files, so it is recovered
+     from the picture itself the first time a room is opened. One decode per
+     shot, and the answer never changes, so it is done once and kept. */
+  useEffect(() => {
+    setPoses([]);
+    setPanoOpen(false);
+    if (!project || !room || !room.panoramas || !room.stations.length) return;
+    const id = project.id;
+    const name = room.name;
+    let alive = true;
+    setSolving(true);
+    solveRoom(room, (i) => panoramaUrl(id, name, i))
+      .then((p) => { if (alive) setPoses(p); })
+      .catch(() => { /* a shot we cannot read simply does not line up */ })
+      .finally(() => { if (alive) setSolving(false); });
+    return () => { alive = false; };
+  }, [project?.id, room?.name, room?.panoramas, room?.stations.length]);
 
   /* ---------------- projects and rooms ---------------- */
   const openProject = async (id: string) => {
@@ -612,6 +662,14 @@ export default function App() {
                   look={look}
                   ghost={ghost}
                   dark={dark}
+                  bounds={bounds}
+                  stations={posts}
+                  pano={panoUrl
+                    ? { url: panoUrl, heading: pose?.heading ?? 0,
+                        station: pose?.station ?? 0 }
+                    : null}
+                  panoOpen={panoOpen}
+                  onLook={setEye}
                 />
               )}
               {inSketch && view === "2d" && (
@@ -641,6 +699,29 @@ export default function App() {
                        : edit === "line" ? T("lineHelp") : T("layerHelp"))
                     : look === "inside" ? T("insideHint") : room.name}
                 </span>
+                {!inSketch && look === "inside" && result && panoUrl && (
+                  panoOpen ? (
+                    <div className="panobar">
+                      <button className="btn q sm"
+                              onClick={() => setPanoOpen(false)}>
+                        {T("panoBack")}
+                      </button>
+                      {!pose && <span className="tag t-warn"><i />{T("panoFree")}</span>}
+                    </div>
+                  ) : (
+                    <button className={pose ? "panochip" : "panochip cold"}
+                            onClick={() => setPanoOpen(true)}>
+                      <span className="strip" style={{
+                        backgroundImage: `url(${panoUrl})`,
+                        /* The strip shows a quarter of the sphere, centred on
+                           whatever the eye is pointing at. */
+                        backgroundPositionX: `${((4 * chipU - 0.5) * 100) / 3}%`,
+                      }} />
+                      <small>{solving ? T("panoSolving")
+                        : pose ? T("panoView") : T("panoUnaligned")}</small>
+                    </button>
+                  )
+                )}
                 <div className="tools">
                   <div className="seg quiet">
                     <button aria-pressed={tool === "face"}

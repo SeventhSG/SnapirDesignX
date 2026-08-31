@@ -89,7 +89,10 @@ class Room:
     ceiling: list[Point] = field(default_factory=list)
     openings: list[Opening] = field(default_factory=list)
     controls: list[Point] = field(default_factory=list)
-    station: Optional[Point] = None
+    # A room can be surveyed from several setups, each with its own panorama.
+    # Distinct positions only: the instrument is written out again every time
+    # it is re-levelled without being moved.
+    stations: list[Point] = field(default_factory=list)
     issues: list[Issue] = field(default_factory=list)
 
     # set by the user or by app settings, not present in the survey data

@@ -13,6 +13,7 @@ File shape:
 from __future__ import annotations
 
 import csv
+import math
 import re
 from pathlib import Path
 
@@ -38,6 +39,7 @@ INDEX_RE = re.compile(r"(\d+)")
 CEILING_XY_TOL = 30.0    # a ceiling shot sits this close to a floor corner
 MAX_OPENING_WIDTH = 320.0  # cm; wider than this is two walls, not one opening
 Z_BAND_TOL = 8.0         # Z readings this close belong to the same plane
+STATION_MERGE_CM = 5.0   # re-levelled in place, not a new setup
 FLOOR_TOL = 12.0         # a shot this near the floor datum sits on the slab
 CEILING_TOL = 18.0       # ceilings are not flat; allow real sag
 MIN_ROOM_HEIGHT = 150.0  # below this, the high band is not a ceiling
@@ -72,7 +74,9 @@ def read_room(path: str | Path) -> Room:
         layer = row[4].strip() if len(row) > 4 else ""
 
         if STATION_RE.search(name):
-            room.station = Point(name, x, y, z, layer, Role.STATION)
+            if not any(math.dist((s.x, s.y, s.z), (x, y, z)) < STATION_MERGE_CM
+                       for s in room.stations):
+                room.stations.append(Point(name, x, y, z, layer, Role.STATION))
             continue
 
         m = INDEX_RE.search(name)

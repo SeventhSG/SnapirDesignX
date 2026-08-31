@@ -40,7 +40,9 @@ def main(folder: str) -> None:
         emit("n_controls", len(r.controls))
         emit("n_segments", len(r.segments))
         emit("n_links", len(r.links))
-        emit("station", r.station.name if r.station else "None")
+        emit("n_stations", len(r.stations))
+        for i, s in enumerate(r.stations):
+            emit(f"station[{i}]", f"{s.name} {num(s.x)} {num(s.y)} {num(s.z)}")
 
         ring = [p.xy for p in r.outline]
         emit("area", num(polygon_area(ring)))

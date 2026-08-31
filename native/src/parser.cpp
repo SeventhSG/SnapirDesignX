@@ -542,7 +542,14 @@ Room read_room(const std::string& path) {
     const std::string layer = row.size() > 4 ? trim(row[4]) : "";
 
     if (is_station(name)) {
-      room.station = Point{name, x, y, z, layer, Role::Station, 0};
+      const bool seen =
+          std::any_of(room.stations.begin(), room.stations.end(),
+                      [&](const Point& s) {
+                        return std::hypot(std::hypot(s.x - x, s.y - y),
+                                          s.z - z) < kStationMergeCm;
+                      });
+      if (!seen)
+        room.stations.push_back(Point{name, x, y, z, layer, Role::Station, 0});
       continue;
     }
     room.points.push_back({name, x, y, z, layer, Role::Unknown, first_index(name)});

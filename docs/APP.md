@@ -86,6 +86,21 @@ resizes or writes one. Cards load lazily and only for the flat that is open,
 so a 28-room survey never has more than a handful of 2 MB equirectangular
 JPEGs decoded at once.
 
+Inside a room the panorama is a photograph you can stand in. The survey pins
+where it was taken -- the instrument writes its own position into the CSV --
+but nothing anywhere records which way it was facing, so the heading is
+recovered from the picture, in the browser. 19 of the 34 shots in the reference
+survey solve; the rest open as a plain 360 viewer that says it cannot be lined
+up rather than being drawn wrong. See [PANORAMA.md](PANORAMA.md).
+
+## Walking
+
+Inside view is a walkthrough, not a fixed eye. It starts where the instrument
+stood, since that is the one spot with a photograph to compare against. Drag to
+look, `W A S D` to walk, tap the floor to go there, tap a station disc to
+return to a setup. Movement is bounded by the surveyed ring, so a wall is a
+wall.
+
 ## Phones and tablets
 
 The page owns the whole window on all three shells, including under the

@@ -29,11 +29,11 @@ export const ROLE_COLOR: Record<string, string> = {
   floor: "#26262A",
   ceiling: "#9E9D95",
   opening: "#A87A26",
-  socket: "#3B7455",
+  socket: "#0F8A4E",
   plumbing: "#3D7A96",
   control: "#7C7B82",
   station: "#7C7B82",
-  unknown: "#A34A28",
+  unknown: "#CB4A2A",
 };
 
 export interface SketchProps {
@@ -76,6 +76,16 @@ interface Props {
   /** See through the walls without cutting the body. */
   ghost?: boolean;
   dark?: boolean;
+  /** The floor ring in survey centimetres. Inside it is where you may walk. */
+  bounds?: [number, number][];
+  /** Where the instrument stood, survey centimetres. Somewhere to stand. */
+  stations?: [number, number, number][];
+  /** The panorama for the station being stood at, once its heading solved. */
+  pano?: { url: string; heading: number; station: number } | null;
+  /** Show the photograph instead of the body. */
+  panoOpen?: boolean;
+  /** Where the eye is now, so the chip above can crop to match. */
+  onLook?: (look: { yaw: number; at: number | null }) => void;
 }
 
 interface Scene {
@@ -101,17 +111,38 @@ interface Scene {
   dark: boolean;
   edges?: THREE.LineSegments;
   shadow?: THREE.Mesh;
+  /** Metres, the offset that put the body on the origin. Survey cm go through
+   *  it to reach the scene. */
+  centre: THREE.Vector3;
+  floorY: number;
+  /** The ring you may walk inside, in world XZ. */
+  fence: [number, number][];
+  /** Where the instrument stood, in world metres. */
+  posts: THREE.Vector3[];
+  markers: THREE.Mesh[];
+  /** Held movement keys, and where a tap asked us to go. */
+  keys: Set<string>;
+  goingTo: THREE.Vector3 | null;
+  /** Locked at the station while the photograph is up. */
+  pinned: boolean;
+  at: number | null;
+  sky?: THREE.Texture;
+  floorFaces: Set<number>;
+  last: number;
+  saidYaw: number;
+  saidAt: number | null;
 }
 
 const CM = 0.01;                       // survey centimetres to scene metres
 
 export default function Viewport({
   mesh, selected, onSelect, sketch, look = "orbit", ghost = false, dark = false,
+  bounds, stations, pano = null, panoOpen = false, onLook,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const S = useRef<Scene>();
-  const cb = useRef({ onSelect, sketch, dark });
-  cb.current = { onSelect, sketch, dark };
+  const cb = useRef({ onSelect, sketch, dark, onLook });
+  cb.current = { onSelect, sketch, dark, onLook };
   // Camera framing is a deliberate act, not a side effect of re-rendering.
   const viewRef = useRef<string>("");
 
@@ -154,6 +185,9 @@ export default function Viewport({
       faceIds: [], dots: [], lines: [], hovered: null, selected: null,
       sketching: false,
       inside: false, eye: new THREE.Vector3(), yaw: 0, pitch: 0, dark,
+      centre: new THREE.Vector3(), floorY: 0, fence: [], posts: [],
+      markers: [], keys: new Set(), goingTo: null, pinned: false, at: null,
+      floorFaces: new Set(), last: 0, saidYaw: NaN, saidAt: NaN as unknown as null,
     };
 
     const resize = () => {
@@ -170,16 +204,22 @@ export default function Viewport({
     resize();
 
     let alive = true;
-    const tick = () => {
+    const tick = (now: number) => {
       if (!alive) return;
+      // Movement is integrated against real elapsed time rather than counted
+      // in frames, so walking is the same speed on a 60 Hz panel and a 144 Hz
+      // one.
+      const dt = state.last ? Math.min((now - state.last) / 1000, 0.1) : 0;
+      state.last = now;
       // OrbitControls rewrites the camera from its own spherical state on
       // every update, even when disabled. Standing inside the room means
       // driving the camera directly, so it must not run at all.
       if (!state.inside) controls.update();
+      else walk(state, dt, cb.current.onLook);
       renderer.render(scene, camera);
       requestAnimationFrame(tick);
     };
-    tick();
+    requestAnimationFrame(tick);
 
     S.current = state;
     return () => {
@@ -216,14 +256,25 @@ export default function Viewport({
     const c = bb.getCenter(new THREE.Vector3());
     body.position.set(-c.x, -c.y, -c.z);
 
+    // Everything the survey knows arrives in centimetres about its own origin,
+    // and the body has just been moved onto the scene origin. Keep the offset
+    // that did it: it is what lets a station or an outline corner be placed
+    // exactly where the instrument put it.
+    s.centre.copy(c);
+
     // Eye height inside the room: 1.6 m above the floor, on the room's axis.
     // Survey Z becomes world Y once the pivot has rotated the group.
     const halfH = (bb.max.z - bb.min.z) / 2;
-    s.eye.set(0, -halfH + 1.6, 0);
+    s.floorY = -halfH;
+    s.eye.set(0, s.floorY + 1.6, 0);
     s.solid.add(body);
     s.body = body;
     s.geom = geom;
     s.faceIds = mesh.faceIds;
+    // Tapping the floor is how you walk somewhere without a keyboard, so the
+    // floor has to be tellable from a wall at pick time.
+    s.floorFaces = new Set(
+      mesh.faces.filter((f) => f.role === "floor").map((f) => f.id));
 
     // Crisp edges are what separate a CAD body from a grey blob. 24 degrees
     // keeps real corners and ignores tessellation seams.
@@ -396,12 +447,80 @@ export default function Viewport({
       ghost ? 0.85 : 0.55;
   }, [ghost, mesh]);
 
+  /* ---------------- where you may walk, and where to stand ---------------- */
+  useEffect(() => {
+    const s = S.current;
+    if (!s || !mesh) return;
+
+    s.fence = (bounds ?? []).map(([x, y]) => {
+      const w = toWorld(s, x, y, 0);
+      return [w.x, w.z] as [number, number];
+    });
+
+    for (const m of s.markers) {
+      s.scene.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    s.markers = [];
+    s.posts = (stations ?? []).map(([x, y, z]) => toWorld(s, x, y, z));
+
+    // A disc on the floor under each setup. It is somewhere to aim for, and it
+    // is the only spot where the photograph taken there is true.
+    s.posts.forEach((post, i) => {
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.32, 40),
+        new THREE.MeshBasicMaterial({
+          color: 0xa87a26, transparent: true, opacity: 0.42,
+          depthWrite: false, side: THREE.DoubleSide,
+        })
+      );
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.set(post.x, s.floorY + 0.012, post.z);
+      disc.renderOrder = 3;
+      disc.userData.post = i;
+      s.scene.add(disc);
+      s.markers.push(disc);
+    });
+  }, [bounds, stations, mesh]);
+
+  /* ---------------- the photograph ---------------- */
+  useEffect(() => {
+    const s = S.current;
+    if (!s) return;
+    s.sky?.dispose();
+    s.sky = undefined;
+    if (!pano) {
+      s.scene.background = null;
+      return;
+    }
+    const tex = new THREE.TextureLoader().load(pano.url);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    s.sky = tex;
+  }, [pano?.url]);
+
+  useEffect(() => {
+    const s = S.current;
+    if (!s) return;
+    const showing = !!panoOpen && !!pano && !!s.sky;
+    s.scene.background = showing ? s.sky! : null;
+    // Three samples the background the same way round as the survey, so only
+    // the offset differs: image column zero faces the solved heading.
+    if (showing) s.scene.backgroundRotation.y = pano!.heading - Math.PI;
+    s.pinned = showing;
+    if (showing) s.at = pano!.station;
+    // The body would sit in front of the photograph and hide it.
+    if (s.body) s.solid.visible = !showing && !sketch;
+    for (const m of s.markers) m.visible = !showing;
+  }, [panoOpen, pano, sketch, mesh]);
+
   /* ---------------- stand inside the room ---------------- */
   useEffect(() => {
     const s = S.current;
     if (!s) return;
     const wantInside = look === "inside" && !sketch && !!s.body;
-    const sig = `${wantInside}|${!!sketch}|${!!s.body}`;
+    const sig = `${wantInside}|${!!sketch}|${!!s.body}|${s.posts.length}`;
     if (viewRef.current === sig) return;      // nothing about the view changed
     viewRef.current = sig;
 
@@ -409,9 +528,15 @@ export default function Viewport({
     s.controls.enabled = !wantInside;
 
     if (wantInside) {
-      // Start facing the longest wall rather than an arbitrary direction.
       s.yaw = 0;
       s.pitch = 0;
+      s.keys.clear();
+      s.goingTo = null;
+      // Start where the surveyor stood, when the survey says. It is the one
+      // spot in the room that has a photograph to be compared against.
+      const start = s.posts[0];
+      if (start) s.eye.set(start.x, s.floorY + EYE, start.z);
+      else s.eye.set(0, s.floorY + EYE, 0);
       s.camera.position.copy(s.eye);
       s.camera.fov = 75;
       s.camera.near = 0.02;
@@ -432,6 +557,34 @@ export default function Viewport({
     s.selected = selected;
     paint(s, selected, s.hovered);
   }, [selected, mesh]);
+
+  /* ---------------- walking ---------------- */
+  useEffect(() => {
+    const held = (e: KeyboardEvent, on: boolean) => {
+      const s = S.current;
+      if (!s?.inside || s.pinned) return;
+      const t = e.target as HTMLElement | null;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k !== "w" && k !== "a" && k !== "s" && k !== "d") return;
+      if (on) s.keys.add(k);
+      else s.keys.delete(k);
+      e.preventDefault();
+    };
+    const down = (e: KeyboardEvent) => held(e, true);
+    const up = (e: KeyboardEvent) => held(e, false);
+    // A window that loses focus mid-stride would otherwise walk for ever.
+    const stop = () => S.current?.keys.clear();
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", stop);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", stop);
+    };
+  }, []);
 
   /* ---------------- picking ---------------- */
   useEffect(() => {
@@ -457,6 +610,19 @@ export default function Viewport({
       const hit = ray.intersectObject(s.body, false)[0];
       if (!hit || hit.faceIndex == null) return null;
       return s.faceIds[hit.faceIndex] ?? null;
+    };
+
+    const markerUnder = (e: PointerEvent): number | null => {
+      if (!s.markers.length || !s.inside) return null;
+      aim(e);
+      const hit = ray.intersectObjects(s.markers, false)[0];
+      return hit ? (hit.object.userData.post as number) : null;
+    };
+
+    const bodyUnder = (e: PointerEvent) => {
+      if (!s.body || !s.solid.visible) return null;
+      aim(e);
+      return ray.intersectObject(s.body, false)[0] ?? null;
     };
 
     const dotUnder = (e: PointerEvent): string | null => {
@@ -502,7 +668,6 @@ export default function Viewport({
       lastAt = { x: e.clientX, y: e.clientY };
       s.camera.rotation.order = "YXZ";
       s.camera.rotation.set(s.pitch, s.yaw, 0);
-      s.camera.position.copy(s.eye);
     };
 
     const wheel = (e: WheelEvent) => {
@@ -530,7 +695,23 @@ export default function Viewport({
       if (s.inside) {
         looking = false;
         el.releasePointerCapture?.(e.pointerId);
-        if (!moved) cb.current.onSelect(faceUnder(e));
+        if (moved || s.pinned) return;
+
+        // A tap on a station disc walks you to where the instrument stood.
+        const post = markerUnder(e);
+        if (post != null) {
+          s.goingTo = s.posts[post].clone();
+          return;
+        }
+        // A tap on the floor walks you there, which is how a phone gets around
+        // a room with no keyboard on it. A tap on a wall still selects it.
+        const hit = bodyUnder(e);
+        const id = hit?.faceIndex != null ? s.faceIds[hit.faceIndex] ?? null : null;
+        if (hit && id != null && s.floorFaces.has(id)) {
+          s.goingTo = new THREE.Vector3(hit.point.x, s.floorY + EYE, hit.point.z);
+          return;
+        }
+        cb.current.onSelect(id);
         return;
       }
       if (onDot) {
@@ -615,6 +796,132 @@ function contactShadow(): THREE.Texture {
   g.fillRect(0, 0, 256, 256);
   shadowTex = new THREE.CanvasTexture(c);
   return shadowTex;
+}
+
+/* ---------------- standing in the room ---------------- */
+
+const SPEED = 2.4;      // metres a second: an unhurried walk, not a sprint
+const EYE = 1.6;        // metres above the floor, standing
+const SNAP = 0.5;       // metres: near enough to a station to be at it
+
+/**
+ * Survey centimetres to scene metres.
+ *
+ * The survey is Z-up about its own origin; the scene is Y-up with the body
+ * moved onto the origin. Both steps are folded in here so nothing else has to
+ * think about it.
+ */
+function toWorld(s: Scene, x: number, y: number, z: number): THREE.Vector3 {
+  return new THREE.Vector3(
+    x * CM - s.centre.x,
+    z * CM - s.centre.z,
+    -(y * CM - s.centre.y),
+  );
+}
+
+/** Whether a world XZ point is inside the surveyed ring. */
+function within(fence: [number, number][], x: number, z: number): boolean {
+  let hit = false;
+  for (let i = 0, j = fence.length - 1; i < fence.length; j = i++) {
+    const [xi, zi] = fence[i];
+    const [xj, zj] = fence[j];
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) {
+      hit = !hit;
+    }
+  }
+  return hit;
+}
+
+/**
+ * Move the eye for this frame.
+ *
+ * The room is the only thing stopping you: the surveyed ring is a real
+ * polygon, so a wall is a wall. A blocked move is retried one axis at a time,
+ * which turns walking into a wall into sliding along it rather than sticking
+ * to it.
+ */
+function walk(
+  s: Scene,
+  dt: number,
+  onLook?: (look: { yaw: number; at: number | null }) => void,
+): void {
+  if (dt) {
+    const from = s.camera.position.clone();
+    const to = from.clone();
+
+    if (s.pinned && s.at != null && s.posts[s.at]) {
+      // The photograph is only true from where it was taken, so while it is up
+      // the eye is held exactly there.
+      to.copy(s.posts[s.at]);
+    } else {
+      let fwd = 0;
+      let side = 0;
+      if (s.keys.has("w")) fwd += 1;
+      if (s.keys.has("s")) fwd -= 1;
+      if (s.keys.has("d")) side += 1;
+      if (s.keys.has("a")) side -= 1;
+
+      if (fwd || side) {
+        s.goingTo = null;               // the keys overrule a tap in flight
+        const sin = Math.sin(s.yaw);
+        const cos = Math.cos(s.yaw);
+        // Forward is where the eye points, flattened onto the floor.
+        const dx = -sin * fwd + cos * side;
+        const dz = -cos * fwd - sin * side;
+        const len = Math.hypot(dx, dz) || 1;
+        to.x += (dx / len) * SPEED * dt;
+        to.z += (dz / len) * SPEED * dt;
+      } else if (s.goingTo) {
+        const step = s.goingTo.clone().sub(from);
+        step.y = 0;
+        const far = step.length();
+        if (far < 0.06) s.goingTo = null;
+        else to.add(step.multiplyScalar(Math.min(1, (SPEED * 1.7 * dt) / far)));
+      }
+
+      to.y = s.floorY + EYE;
+      if (s.fence.length > 2 && !within(s.fence, to.x, to.z)) {
+        if (within(s.fence, to.x, from.z)) to.z = from.z;
+        else if (within(s.fence, from.x, to.z)) to.x = from.x;
+        else {
+          to.x = from.x;
+          to.z = from.z;
+          s.goingTo = null;
+        }
+      }
+    }
+
+    s.camera.position.copy(to);
+    s.eye.copy(to);
+  }
+
+  // Which station we are standing at, if any. The panorama chip needs it, and
+  // so does the decision about whether the photograph can be trusted at all.
+  let at: number | null = null;
+  let best = SNAP;
+  for (let i = 0; i < s.posts.length; i++) {
+    const d = Math.hypot(
+      s.posts[i].x - s.camera.position.x,
+      s.posts[i].z - s.camera.position.z,
+    );
+    if (d < best) {
+      best = d;
+      at = i;
+    }
+  }
+  s.at = at;
+  for (let i = 0; i < s.markers.length; i++) {
+    const m = s.markers[i].material as THREE.MeshBasicMaterial;
+    m.opacity = i === at ? 0.9 : 0.42;
+  }
+
+  // React must not be re-rendered sixty times a second for a camera that has
+  // barely moved.
+  if (onLook && (Math.abs(s.yaw - s.saidYaw) > 0.008 || at !== s.saidAt)) {
+    s.saidYaw = s.yaw;
+    s.saidAt = at;
+    onLook({ yaw: s.yaw, at });
+  }
 }
 
 /** Repaint per-vertex colours for the current selection and hover. */

@@ -46,7 +46,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.2.2";
+constexpr const char* kVersion = "1.2.3";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -404,6 +404,14 @@ Json room_json(const Room& room, const RoomOverride* ov,
                           {"role", to_string(p.role)},
                           {"layer", p.layer}});
   j["points"] = points;
+
+  // Where the instrument stood. One setup per panorama, so this is also where
+  // each panorama was shot from.
+  Json stations = Json::array();
+  for (const auto& s : room.stations)
+    stations.push_back(
+        Json{{"name", s.name}, {"x", s.x}, {"y", s.y}, {"z", s.z}});
+  j["stations"] = stations;
 
   Json openings = Json::array();
   for (size_t i = 0; i < room.openings.size(); ++i) {

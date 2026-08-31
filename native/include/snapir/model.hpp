@@ -70,7 +70,10 @@ struct Room {
   std::vector<Point> ceiling;
   std::vector<Opening> openings;
   std::vector<Point> controls;
-  std::optional<Point> station;
+  // A room can be surveyed from several setups, each with its own panorama.
+  // Distinct positions only: the instrument is written out again every time it
+  // is re-levelled without being moved.
+  std::vector<Point> stations;
   std::vector<Issue> issues;
 
   // Set by the user or by app settings, not present in the survey data.

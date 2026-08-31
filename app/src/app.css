@@ -7,8 +7,8 @@
   --ink:#26262A; --ink-2:#5A5A61; --ink-3:#7C7B82;
   --gold:#A87A26; --gold-2:#C99B3F; --gold-ink:#7A5716;
   --gold-wash:#FAF3E4; --gold-line:#E4CE9C; --on-gold:#FFFFFF;
-  --ok:#3B7455; --ok-wash:#EAF1EC;
-  --warn:#A34A28; --warn-wash:#FAEDE7;
+  --ok:#177A4E; --on-ok:#FFFFFF;
+  --warn:#BF3A17; --on-warn:#FFFFFF; --warn-wash:#FBE7DF;
   --vp-a:#EFEFEA; --vp-b:#DBDBD3;
   --sh-1:0 1px 1px rgba(38,38,42,.05);
   --sh-2:0 1px 2px rgba(38,38,42,.06), 0 14px 34px -18px rgba(38,38,42,.26);
@@ -53,8 +53,8 @@ button{font-family:inherit}
   --ink:#F0EFEA; --ink-2:#A6A5A0; --ink-3:#88878E;
   --gold:#C9993C; --gold-2:#DDB05B; --gold-ink:#E4C077;
   --gold-wash:#2A2213; --gold-line:#54421D; --on-gold:#17120A;
-  --ok:#6FA98A; --ok-wash:#17241D;
-  --warn:#CE7C55; --warn-wash:#2A1A12;
+  --ok:#3FB47A; --on-ok:#08210F;
+  --warn:#E46B3C; --on-warn:#241007; --warn-wash:#2E1A11;
   --vp-a:#232327; --vp-b:#141416;
   --sh-1:0 1px 1px rgba(0,0,0,.34);
   --sh-2:0 1px 2px rgba(0,0,0,.42), 0 14px 34px -18px rgba(0,0,0,.75);
@@ -141,8 +141,8 @@ button{font-family:inherit}
 .tag{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;
   padding:3px 9px;border-radius:6px;white-space:nowrap}
 .tag i{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
-.t-ok{background:var(--ok-wash);color:var(--ok)}
-.t-warn{background:var(--warn-wash);color:var(--warn)}
+.t-ok{background:var(--ok);color:var(--on-ok)}
+.t-warn{background:var(--warn);color:var(--on-warn)}
 .t-done{background:var(--gold);color:var(--on-gold)}
 
 /* ------------------------------------------------ launch */
@@ -195,7 +195,7 @@ button{font-family:inherit}
    The flat name is the one piece of text the operator hunts for from arm's
    length, so it is the largest and it carries the accent. */
 .flats{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:14px}
-.fcard{appearance:none;text-align:left;cursor:pointer;background:var(--panel);
+.fcard{appearance:none;text-align:left;cursor:pointer;background:var(--panel);color:inherit;
   border:1px solid var(--line);border-radius:14px;padding:18px 18px 15px;
   display:flex;flex-direction:column;gap:12px;
   transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease),
@@ -215,7 +215,7 @@ button{font-family:inherit}
 .page-head h2.flatname{color:var(--gold-ink);font-size:26px;font-weight:650;
   letter-spacing:-.02em}
 .rooms{display:grid;grid-template-columns:repeat(auto-fill,minmax(244px,1fr));gap:14px}
-.rcard{appearance:none;text-align:left;cursor:pointer;background:var(--panel);
+.rcard{appearance:none;text-align:left;cursor:pointer;background:var(--panel);color:inherit;
   border:1px solid var(--line);border-radius:14px;overflow:hidden;padding:0;
   display:flex;flex-direction:column;
   transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease),
@@ -252,6 +252,39 @@ button{font-family:inherit}
   bottom:calc(14px + var(--sa-b));display:flex;gap:8px;pointer-events:auto}
 .vp .busy{position:absolute;inset:0;display:grid;place-items:center;
   background:color-mix(in srgb,var(--vp-a) 72%,transparent);font-size:13px;color:var(--ink-2)}
+
+/* ------------------------------------------------ the photograph
+   The survey camera shot a panorama from where the instrument stood. Inside
+   the room, a strip of it sits above the view, cropped to whatever the eye is
+   pointing at, and opening it swaps the body for the picture. */
+.panochip,.panobar{
+  position:absolute;left:50%;top:calc(13px + var(--sa-t));transform:translateX(-50%);
+  pointer-events:auto;
+}
+.panochip{
+  appearance:none;cursor:pointer;color:inherit;font-family:inherit;
+  display:flex;flex-direction:column;gap:5px;width:238px;padding:5px;
+  background:var(--panel);border:1px solid var(--line-2);border-radius:12px;
+  box-shadow:var(--sh-2);
+  transition:border-color var(--fast) var(--ease),transform var(--fast) var(--ease);
+}
+.panochip:hover{border-color:var(--gold-line);transform:translateX(-50%) translateY(-1px)}
+.panochip:active{transform:translateX(-50%)}
+/* Four times the width, repeating: the strip shows a quarter of the sphere and
+   wraps at the seam without a join. The height is left to follow the width, so
+   what shows is a band around the horizon at its true proportions rather than
+   the whole 180 degrees squashed into a letterbox. */
+.panochip .strip{
+  display:block;height:58px;border-radius:8px;background-color:var(--sunk);
+  background-size:400% auto;background-repeat:repeat-x;background-position-y:center;
+}
+.panochip small{
+  font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);text-align:center;
+}
+.panochip.cold .strip{filter:grayscale(.65)}
+.panochip.cold small{color:var(--warn)}
+.panobar{display:flex;align-items:center;gap:9px}
 
 .insp{background:var(--rail);border-left:1px solid var(--line);overflow:auto;
   padding:16px calc(16px + var(--sa-r)) calc(16px + var(--sa-b)) 16px;
@@ -594,6 +627,11 @@ button{font-family:inherit}
      phone -- forcing a single column here wasted half an iPad. */
   .cards{grid-template-columns:1fr}
   .page-head h2.flatname{font-size:22px}
+  /* On a phone the hint owns the top line, so the strip drops below it and
+     gives up width to the view it sits over. */
+  .panochip,.panobar{top:calc(40px + var(--sa-t))}
+  .panochip{width:186px}
+  .panochip .strip{height:46px}
   .fcard b{font-size:21px}
 
   .lrow{grid-template-columns:1fr;gap:10px}

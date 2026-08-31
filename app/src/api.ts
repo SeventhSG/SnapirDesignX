@@ -15,6 +15,12 @@ export interface Point {
   name: string; x: number; y: number; z: number; role: string; layer: string;
 }
 
+/** Where the instrument stood. One setup per panorama, so this is also
+ *  where a panorama was shot from. */
+export interface Station {
+  name: string; x: number; y: number; z: number;
+}
+
 export interface Opening {
   index: number; kind: string; width: number; sill: number; head: number;
   left: [number, number]; right: [number, number];
@@ -22,7 +28,7 @@ export interface Opening {
 
 export interface Room {
   name: string; flat: string; label: string; outlineSource: string;
-  panoramas: number;
+  panoramas: number; stations: Station[];
   area: number; ceilingHeight: number | null; floorZ: number | null;
   outline: string[]; points: Point[]; openings: Opening[]; issues: Issue[];
   segments: [string, string][]; links: [string, string][];
@@ -78,6 +84,7 @@ function fill(r: Room): Room {
     segments: r.segments ?? [],
     links: r.links ?? [],
     panoramas: r.panoramas ?? 0,
+    stations: r.stations ?? [],
   };
 }
 

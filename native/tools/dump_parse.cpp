@@ -48,7 +48,12 @@ int main(int argc, char** argv) {
     emit(n, "n_controls", std::to_string(r.controls.size()));
     emit(n, "n_segments", std::to_string(r.segments.size()));
     emit(n, "n_links", std::to_string(r.links.size()));
-    emit(n, "station", r.station ? r.station->name : "None");
+    emit(n, "n_stations", std::to_string(r.stations.size()));
+    for (size_t i = 0; i < r.stations.size(); ++i) {
+      const auto& s = r.stations[i];
+      emit(n, "station[" + std::to_string(i) + "]",
+           s.name + " " + num(s.x) + " " + num(s.y) + " " + num(s.z));
+    }
 
     std::vector<Pt> ring;
     for (const auto& p : r.outline) ring.push_back({p.x, p.y});
