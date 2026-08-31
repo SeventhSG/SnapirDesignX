@@ -33,6 +33,7 @@
     "wait-on": "^8.0.1"
   },
   "build": {
+    "afterPack": "electron/afterPack.cjs",
     "appId": "com.snapirdesign.designx",
     "productName": "Snapir Design X",
     "directories": {

@@ -134,6 +134,7 @@ function waitForBackend(timeoutMs = 40000) {
 
 function createWindow() {
   win = new BrowserWindow({
+    title: "Snapir Design X",
     width: 1320,
     height: 860,
     minWidth: 980,

@@ -1,6 +1,6 @@
 # Snapir Design X 1.2.4
 
-Three fixes to what 1.2.3 shipped. No geometry changes.
+Fixes to what 1.2.3 shipped. No geometry changes.
 
 ## The panorama asks instead of announcing
 
@@ -31,3 +31,19 @@ datum now and is visible in the normal view.
 
 The same datum sets eye height, so standing inside a room was also lower than
 1.6 m by the thickness of the slab. That is right now too.
+
+## The installed app called itself Electron
+
+Task Manager, Alt-Tab and the executable's own Properties all read "Electron"
+by "GitHub, Inc.", version 33.4.11. The installer's shortcut name and the
+window title never touch that: it is compiled into the binary, and it has to be
+rewritten after packaging.
+
+electron-builder does that itself, but only with `signAndEditExecutable` left
+on -- and turning it on drags in its winCodeSign toolchain, whose archive
+carries macOS symlinks that Windows will not extract without Developer Mode.
+That is a signing dependency, and there is nothing here to sign.
+
+So rcedit is vendored and run directly, after packaging. The executable now
+reports Snapir Design X by Snapir Design at the version it actually is, and the
+build needs no download and no privilege it did not already have.
