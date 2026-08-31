@@ -40,6 +40,9 @@ env:
 jobs:
   build:
     runs-on: macos-14
+    # Only so a release-triggered run can put the .ipa on the release.
+    permissions:
+      contents: write
     timeout-minutes: 300
 
     steps:
@@ -134,6 +137,51 @@ jobs:
           name: ios-screenshots
           path: shots/*.png
           if-no-files-found: warn
+
+      # An .ipa is a zip with the app inside Payload/, and nothing more. It is
+      # left unsigned on purpose: there is no Apple Developer account, and
+      # Sideloadly and AltStore strip whatever signature is there and re-sign
+      # with the installing user's own Apple ID anyway, so signing here would
+      # buy nothing.
+      #
+      # It has to be the DEVICE build. The simulator slice is x86_64/arm64-sim
+      # and will install on no phone ever made, while looking exactly like a
+      # working .ipa from the outside.
+      - name: Wrap the device build as an unsigned .ipa
+        run: |
+          set -euo pipefail
+          app="out/ios-device/Release-iphoneos/Snapir.app"
+          test -d "$app" || { echo "No device build at $app"; exit 1; }
+
+          # Refuse to ship a simulator slice dressed up as an .ipa.
+          if ! vtool -show-build "$app/Snapir" 2>/dev/null | grep -q "platform IOS"; then
+            echo "$app is not an iOS device binary:"
+            vtool -show-build "$app/Snapir" || true
+            exit 1
+          fi
+
+          version=$(node -p "require('./app/package.json').version")
+          rm -rf payload && mkdir -p payload/Payload
+          cp -R "$app" payload/Payload/
+          (cd payload && zip -qry "../Snapir-$version-unsigned.ipa" Payload)
+          ls -lh "Snapir-$version-unsigned.ipa"
+
+      - name: Unsigned .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa-unsigned
+          path: Snapir-*-unsigned.ipa
+          if-no-files-found: error
+
+      # When this run came from publishing a release, put the .ipa on the
+      # release itself. As a bare workflow artifact it expires and nobody
+      # looking at the release would ever find it.
+      - name: Attach the .ipa to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}"             Snapir-*-unsigned.ipa --clobber
 
       - name: App bundles
         uses: actions/upload-artifact@v4
