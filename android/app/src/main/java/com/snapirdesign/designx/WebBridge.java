@@ -22,6 +22,11 @@ public class WebBridge {
         activity.runOnUiThread(activity::pickFolder);
     }
 
+    @JavascriptInterface
+    public void pickSdxp() {
+        activity.runOnUiThread(activity::pickSdxp);
+    }
+
     /** There is no file manager to jump to, so say where the file landed. */
     @JavascriptInterface
     public void reveal(String path) {

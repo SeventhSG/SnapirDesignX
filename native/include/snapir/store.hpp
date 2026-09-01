@@ -20,6 +20,7 @@ using Json = nlohmann::json;
 
 std::string app_dir();
 std::string now_iso8601();
+std::string new_id();  // 12 random hex characters, the same shape as a project id
 
 // Operator decisions for one room. Absent means nothing was overridden.
 struct RoomOverride {
@@ -38,6 +39,23 @@ struct RoomOverride {
   std::optional<std::string> step_path;
 };
 
+// One door hooked to another, so a walkthrough can cross from the room on
+// one side to the room on the other. Each room keeps its own independent
+// survey coordinates always - there is no shared building frame - so this
+// carries a small rigid transform of its own: where room_b sits, and how it
+// is turned, if its coordinates were dropped into room_a's local frame.
+// Computed once (aligning the two openings) and adjustable afterward.
+struct Connection {
+  std::string id;
+  std::string room_a;
+  int opening_a = -1;
+  std::string room_b;
+  int opening_b = -1;
+  double dx = 0, dy = 0;        // cm, room_b's origin in room_a's frame
+  double rotation_deg = 0;      // room_b's turn about its origin
+  bool enabled = true;
+};
+
 struct ProjectRecord {
   std::string id;
   std::string name;
@@ -46,6 +64,7 @@ struct ProjectRecord {
   std::string opened_at;
   double thickness = 200.0;  // mm
   std::map<std::string, RoomOverride> overrides;
+  std::vector<Connection> connections;
 
   void touch() { opened_at = now_iso8601(); }
 };
@@ -58,6 +77,9 @@ class Store {
   void save() const;
 
   ProjectRecord& create(const std::string& name, const std::string& folder);
+  // Inserts an already-built record (an imported .sdxp), assigning a fresh id
+  // so it never collides with the one it was exported from.
+  ProjectRecord& adopt(ProjectRecord rec);
   ProjectRecord& get(const std::string& pid);              // throws std::out_of_range
   const ProjectRecord* find(const std::string& pid) const;
   void remove(const std::string& pid);
@@ -73,5 +95,8 @@ class Store {
 
 Json to_json(const RoomOverride& ov);
 RoomOverride override_from_json(const Json& j);
+
+Json to_json(const Connection& c);
+Connection connection_from_json(const Json& j);
 
 }  // namespace snapir

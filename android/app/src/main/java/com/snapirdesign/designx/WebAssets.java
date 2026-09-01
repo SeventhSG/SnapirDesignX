@@ -42,6 +42,15 @@ final class WebAssets {
             + "      };\n"
             + "      try { SnapirAndroid.pickFolder(); } catch (e) { resolve(null); }\n"
             + "    });\n"
+            + "  },\n"
+            + "  pickSdxp: function () {\n"
+            + "    return new Promise(function (resolve) {\n"
+            + "      window.__snapirSdxpChosen = function (path) {\n"
+            + "        window.__snapirSdxpChosen = null;\n"
+            + "        resolve(path || null);\n"
+            + "      };\n"
+            + "      try { SnapirAndroid.pickSdxp(); } catch (e) { resolve(null); }\n"
+            + "    });\n"
             + "  }\n"
             + "};\n";
 

@@ -1,6 +1,7 @@
 #import "WebBridge.h"
 
 #import "FolderImport.h"
+#import "SdxpImport.h"
 
 @interface SnapirWebBridge ()
 @property(nonatomic, weak) UIViewController *host;
@@ -39,6 +40,18 @@
       @"          resolve(null);\n"
       @"        }\n"
       @"      });\n"
+      @"    },\n"
+      @"    pickSdxp: function () {\n"
+      @"      return new Promise(function (resolve) {\n"
+      @"        window.__snapirSdxpChosen = function (path) {\n"
+      @"          window.__snapirSdxpChosen = null;\n"
+      @"          resolve(path || null);\n"
+      @"        };\n"
+      @"        if (!post('pickSdxp', null)) {\n"
+      @"          window.__snapirSdxpChosen = null;\n"
+      @"          resolve(null);\n"
+      @"        }\n"
+      @"      });\n"
       @"    }\n"
       @"  };\n"
       @"})();\n";
@@ -67,6 +80,8 @@
 
   if ([name isEqualToString:@"pickFolder"]) {
     [self pickFolder];
+  } else if ([name isEqualToString:@"pickSdxp"]) {
+    [self pickSdxp];
   } else if ([name isEqualToString:@"reveal"]) {
     [self reveal:body[@"arg"]];
   } else if ([name isEqualToString:@"setTheme"]) {
@@ -93,6 +108,30 @@
                            @"window.__snapirFolderChosen && window.__snapirFolderChosen(%@)",
                            [self jsString:path]]
            : @"window.__snapirFolderChosen && window.__snapirFolderChosen(null)";
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self.webView evaluateJavaScript:js completionHandler:nil];
+  });
+}
+
+- (void)pickSdxp {
+  UIViewController *host = self.host;
+  if (!host) {
+    [self deliverSdxp:nil];
+    return;
+  }
+  [SnapirSdxpImport presentFrom:host
+                      completion:^(NSString *path) {
+                        [self deliverSdxp:path];
+                      }];
+}
+
+/// Hands a chosen .sdxp's real path back to the promise the page is waiting on.
+- (void)deliverSdxp:(NSString *)path {
+  NSString *js =
+      path ? [NSString stringWithFormat:
+                           @"window.__snapirSdxpChosen && window.__snapirSdxpChosen(%@)",
+                           [self jsString:path]]
+           : @"window.__snapirSdxpChosen && window.__snapirSdxpChosen(null)";
   dispatch_async(dispatch_get_main_queue(), ^{
     [self.webView evaluateJavaScript:js completionHandler:nil];
   });

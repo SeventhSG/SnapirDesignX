@@ -89,6 +89,36 @@ interface Props {
   panoOpen?: boolean;
   /** Where the eye is now, so the chip above can crop to match. */
   onLook?: (look: { yaw: number; at: number | null }) => void;
+  /** Doors hooked to another room, in this room's own survey centimetres.
+   *  Walking into one, or clicking its ghost, crosses into the room beyond. */
+  doors?: DoorLink[];
+  /** A faded preview of what is beyond each connected door, already placed
+   *  into this room's local frame (rotate then translate). */
+  ghostRooms?: GhostRoom[];
+  /** A connected door was walked into or clicked on. */
+  onCrossDoor?: (connectionId: string) => void;
+  /** Stand here instead of at the first station -- set right after crossing
+   *  into this room through a connected door, survey centimetres + world
+   *  yaw radians (already carried across the connection's own rotation by
+   *  the caller, so this is the heading to face, not a fixed "into the
+   *  room" direction). */
+  enterAt?: { x: number; y: number; yaw: number } | null;
+}
+
+export interface DoorLink {
+  connectionId: string;
+  left: [number, number];
+  right: [number, number];
+}
+
+export interface GhostRoom {
+  connectionId: string;
+  outline: [number, number][];
+  floorZ: number | null;
+  ceilingHeight: number | null;
+  dx: number;
+  dy: number;
+  rotationDeg: number;
 }
 
 interface Scene {
@@ -134,6 +164,19 @@ interface Scene {
   last: number;
   saidYaw: number;
   saidAt: number | null;
+  /** Connected doors, world XZ. */
+  doors: {
+    connectionId: string;
+    mid: [number, number];
+    tangent: [number, number];  // unit, along the doorway's own width
+    outward: [number, number];  // unit, away from this room's interior
+    halfWidth: number;
+  }[];
+  ghostGroup: THREE.Group;
+  ghostMeshes: THREE.Mesh[];
+  /** A lit panel standing in each connected or pickable doorway - the visual
+   *  cue for "walk here" or "click here", pulsing so it reads at a glance. */
+  doorGlows: THREE.Mesh[];
 }
 
 const CM = 0.01;                       // survey centimetres to scene metres
@@ -141,11 +184,12 @@ const CM = 0.01;                       // survey centimetres to scene metres
 export default function Viewport({
   mesh, selected, onSelect, sketch, look = "orbit", ghost = false, dark = false,
   bounds, stations, floorZ, pano = null, panoOpen = false, onLook,
+  doors, ghostRooms, onCrossDoor, enterAt,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const S = useRef<Scene>();
-  const cb = useRef({ onSelect, sketch, dark, onLook });
-  cb.current = { onSelect, sketch, dark, onLook };
+  const cb = useRef({ onSelect, sketch, dark, onLook, onCrossDoor });
+  cb.current = { onSelect, sketch, dark, onLook, onCrossDoor };
   // Camera framing is a deliberate act, not a side effect of re-rendering.
   const viewRef = useRef<string>("");
 
@@ -183,6 +227,12 @@ export default function Viewport({
     const sk = new THREE.Group();
     pivot.add(solid, sk);
 
+    // Ghosts of connected rooms, world space like the station discs -- not
+    // under pivot, since their placement is already computed into this
+    // room's local frame before toWorld ever sees it.
+    const ghostGroup = new THREE.Group();
+    scene.add(ghostGroup);
+
     const state: Scene = {
       renderer, scene, camera, controls, solid, sketch: sk, lineMats: [],
       faceIds: [], dots: [], lines: [], hovered: null, selected: null,
@@ -191,6 +241,7 @@ export default function Viewport({
       centre: new THREE.Vector3(), floorY: 0, fence: [], posts: [],
       markers: [], keys: new Set(), goingTo: null, pinned: false, at: null,
       floorFaces: new Set(), last: 0, saidYaw: NaN, saidAt: NaN as unknown as null,
+      doors: [], ghostGroup, ghostMeshes: [], doorGlows: [],
     };
 
     const resize = () => {
@@ -218,7 +269,11 @@ export default function Viewport({
       // every update, even when disabled. Standing inside the room means
       // driving the camera directly, so it must not run at all.
       if (!state.inside) controls.update();
-      else walk(state, dt, cb.current.onLook);
+      else walk(state, dt, cb.current.onLook, cb.current.onCrossDoor);
+      if (state.doorGlows.length) {
+        const pulse = 0.42 + 0.22 * Math.sin(now / 420);
+        for (const g of state.doorGlows) (g.material as THREE.MeshBasicMaterial).opacity = pulse;
+      }
       renderer.render(scene, camera);
       requestAnimationFrame(tick);
     };
@@ -307,7 +362,13 @@ export default function Viewport({
     s.solid.add(shadow);
     s.shadow = shadow;
 
-    if (!s.sketching) frame(s, geom.boundingBox!.getSize(new THREE.Vector3()).length());
+    // frame() is the orbit-view "fit the whole body in frame" reset. A mesh
+    // used to only ever change while looking from outside, so this never had
+    // to check - crossing a connected door is the first time it changes
+    // while already standing inside, and the entering-through-a-door effect
+    // is the one that gets to place the camera then.
+    if (!s.sketching && !s.inside)
+      frame(s, geom.boundingBox!.getSize(new THREE.Vector3()).length());
     paint(s, null, null);
   }, [mesh]);
 
@@ -466,6 +527,32 @@ export default function Viewport({
       return [w.x, w.z] as [number, number];
     });
 
+    s.doors = (doors ?? []).map((d) => {
+      const l = toWorld(s, d.left[0], d.left[1], 0);
+      const r = toWorld(s, d.right[0], d.right[1], 0);
+      const mid: [number, number] = [(l.x + r.x) / 2, (l.z + r.z) / 2];
+      const span = Math.hypot(r.x - l.x, r.z - l.z) || 0.01;
+      const tangent: [number, number] = [(r.x - l.x) / span, (r.z - l.z) / span];
+      let outward: [number, number] = [-tangent[1], tangent[0]];
+      // A doorway has two perpendiculars; walk a step down each and keep
+      // whichever one lands outside this room's own ring.
+      const probe: [number, number] = [mid[0] + outward[0] * 0.3, mid[1] + outward[1] * 0.3];
+      if (s.fence.length > 2 && within(s.fence, probe[0], probe[1]))
+        outward = [-outward[0], -outward[1]];
+      return { connectionId: d.connectionId, mid, tangent, outward, halfWidth: span / 2 };
+    });
+
+    for (const g of s.doorGlows) {
+      s.scene.remove(g);
+      g.geometry.dispose();
+      (g.material as THREE.Material).dispose();
+    }
+    s.doorGlows = (doors ?? []).map((d) => {
+      const g = buildDoorGlow(s, d);
+      s.scene.add(g);
+      return g;
+    });
+
     for (const m of s.markers) {
       s.scene.remove(m);
       m.geometry.dispose();
@@ -491,7 +578,26 @@ export default function Viewport({
       s.scene.add(disc);
       s.markers.push(disc);
     });
-  }, [bounds, stations, floorZ, mesh]);
+  }, [bounds, stations, floorZ, mesh, doors]);
+
+  /* ---------------- ghosts of connected rooms ---------------- */
+  useEffect(() => {
+    const s = S.current;
+    if (!s) return;
+    for (const m of s.ghostMeshes) {
+      s.ghostGroup.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    s.ghostMeshes = (ghostRooms ?? [])
+      .filter((g) => g.outline.length >= 3)
+      .map((g) => {
+        const built = buildGhostMesh(s, g, floorZ ?? 0);
+        built.userData.connectionId = g.connectionId;
+        s.ghostGroup.add(built);
+        return built;
+      });
+  }, [ghostRooms, floorZ, mesh]);
 
   /* ---------------- the photograph ---------------- */
   useEffect(() => {
@@ -559,6 +665,23 @@ export default function Viewport({
     }
   }, [look, sketch, mesh]);
 
+  /* ---------------- entering through a connected door ---------------- */
+  useEffect(() => {
+    const s = S.current;
+    if (!s || !enterAt || !s.inside) return;
+    // enterAt.yaw already carries your heading across the connection's own
+    // rotation (the caller's job, not this component's - it is the only
+    // side that knows the transform), so this is a plain teleport to it.
+    const p = toWorld(s, enterAt.x, enterAt.y, 0);
+    s.eye.set(p.x, s.floorY + EYE, p.z);
+    s.camera.position.copy(s.eye);
+    s.yaw = enterAt.yaw;
+    s.pitch = 0;
+    s.camera.rotation.set(0, 0, 0);
+    s.camera.rotateY(s.yaw);
+    s.goingTo = null;
+  }, [enterAt]);
+
   /* ---------------- selection from outside ---------------- */
   useEffect(() => {
     const s = S.current;
@@ -605,6 +728,12 @@ export default function Viewport({
     const ndc = new THREE.Vector2();
     let downAt = { x: 0, y: 0 };
     let onDot = false;
+    /* Inside view has no OrbitControls (it is disabled there), so pinch
+     * zoom gets nothing for free the way orbit mode's does - it has to be
+     * tracked here, by pointer id, same as OrbitControls does internally. */
+    const pinch = new Map<number, { x: number; y: number }>();
+    let lastPinchDist = 0;
+    let gesturePinched = false;
 
     const aim = (e: PointerEvent) => {
       const r = el.getBoundingClientRect();
@@ -626,6 +755,17 @@ export default function Viewport({
       aim(e);
       const hit = ray.intersectObjects(s.markers, false)[0];
       return hit ? (hit.object.userData.post as number) : null;
+    };
+
+    /* The glow panel itself is the hit target, in orbit view as much as
+     * inside - not the whole translucent ghost room, which would say yes to
+     * a tap anywhere on it and give no way to tell one candidate door from
+     * another. */
+    const doorGlowUnder = (e: PointerEvent): string | null => {
+      if (!s.doorGlows.length) return null;
+      aim(e);
+      const hit = ray.intersectObjects(s.doorGlows, false)[0];
+      return hit ? (hit.object.userData.connectionId as string) : null;
     };
 
     const bodyUnder = (e: PointerEvent) => {
@@ -651,6 +791,24 @@ export default function Viewport({
 
     const move = (e: PointerEvent) => {
       if (s.inside) {
+        if (pinch.has(e.pointerId)) {
+          pinch.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          if (pinch.size >= 2) {
+            const [a, b] = Array.from(pinch.values());
+            const dist = Math.hypot(a.x - b.x, a.y - b.y);
+            // Fingers spreading apart narrows the fov (zooms in); the first
+            // sample after a finger touches down has no prior distance to
+            // diff against, so it only sets the baseline.
+            if (lastPinchDist > 0) {
+              s.camera.fov = Math.max(35, Math.min(95,
+                s.camera.fov - (dist - lastPinchDist) * 0.15));
+              s.camera.updateProjectionMatrix();
+            }
+            lastPinchDist = dist;
+            el.style.cursor = "grabbing";
+            return;
+          }
+        }
         if (looking) lookMove(e);
         el.style.cursor = looking ? "grabbing" : "grab";
         return;
@@ -688,8 +846,17 @@ export default function Viewport({
 
     const down = (e: PointerEvent) => {
       if (s.inside) {
-        looking = true;
-        lastAt = { x: e.clientX, y: e.clientY };
+        pinch.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pinch.size >= 2) {
+          // A second finger landing mid-look is a pinch starting, not two
+          // people trying to look around at once.
+          gesturePinched = true;
+          looking = false;
+          lastPinchDist = 0;
+        } else {
+          looking = true;
+          lastAt = { x: e.clientX, y: e.clientY };
+        }
         el.setPointerCapture?.(e.pointerId);
       }
       downAt = { x: e.clientX, y: e.clientY };
@@ -702,9 +869,26 @@ export default function Viewport({
     const up = (e: PointerEvent) => {
       const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4;
       if (s.inside) {
-        looking = false;
+        pinch.delete(e.pointerId);
         el.releasePointerCapture?.(e.pointerId);
+        if (pinch.size === 1) {
+          // One finger still down after a pinch: keep looking from where
+          // that finger already is, rather than jumping to wherever it
+          // first touched down.
+          const [remaining] = pinch.values();
+          looking = true;
+          lastAt = remaining;
+          return;
+        }
+        looking = false;
+        lastPinchDist = 0;
+        if (gesturePinched) { gesturePinched = false; return; }
         if (moved || s.pinned) return;
+
+        // A tap on a glowing door crosses into the room beyond it, same as
+        // walking through the doorway would.
+        const doorId = doorGlowUnder(e);
+        if (doorId != null) { cb.current.onCrossDoor?.(doorId); return; }
 
         // A tap on a station disc walks you to where the instrument stood.
         const post = markerUnder(e);
@@ -738,11 +922,19 @@ export default function Viewport({
         cb.current.sketch?.onPickLine(lineUnder(e));
         return;
       }
+      // A glowing door reads from outside the room just as it does from
+      // inside it - orbiting around a body to find its doors is normal.
+      const doorId = doorGlowUnder(e);
+      if (doorId != null) { cb.current.onCrossDoor?.(doorId); return; }
       cb.current.onSelect(faceUnder(e));
     };
 
-    const cancel = () => {
+    const cancel = (e: PointerEvent) => {
       if (!s.inside) s.controls.enabled = true;
+      else {
+        pinch.delete(e.pointerId);
+        if (pinch.size < 2) { looking = false; lastPinchDist = 0; gesturePinched = false; }
+      }
       onDot = false;
     };
 
@@ -828,6 +1020,77 @@ function toWorld(s: Scene, x: number, y: number, z: number): THREE.Vector3 {
   );
 }
 
+// cm above the survey's own z=0, same baseline the door markers use - tall
+// enough to read as a doorway without claiming to be the room's real height.
+const DOOR_GLOW_HEIGHT = 210;
+
+/** A lit panel filling a doorway, survey centimetres in, world metres out. */
+function buildDoorGlow(s: Scene, d: DoorLink): THREE.Mesh {
+  const bl = toWorld(s, d.left[0], d.left[1], 0);
+  const br = toWorld(s, d.right[0], d.right[1], 0);
+  const tl = toWorld(s, d.left[0], d.left[1], DOOR_GLOW_HEIGHT);
+  const tr = toWorld(s, d.right[0], d.right[1], DOOR_GLOW_HEIGHT);
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute([
+    bl.x, bl.y, bl.z, br.x, br.y, br.z, tr.x, tr.y, tr.z,
+    bl.x, bl.y, bl.z, tr.x, tr.y, tr.z, tl.x, tl.y, tl.z,
+  ], 3));
+
+  const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+    color: 0xC99B3F, transparent: true, opacity: 0.5,
+    side: THREE.DoubleSide, depthWrite: false,
+  }));
+  mesh.renderOrder = 4;
+  mesh.userData.connectionId = d.connectionId;
+  return mesh;
+}
+
+/**
+ * A faded wall loop for a connected room's outline, placed into the current
+ * room's local frame (rotate then translate, both in survey centimetres)
+ * before going through the same toWorld every other marker uses.
+ *
+ * Just the walls, not the fixtures or the exact B-rep: this is a "a room
+ * continues beyond this door" cue, not a second body to measure from.
+ */
+function buildGhostMesh(s: Scene, g: GhostRoom, fallbackFloorZ: number): THREE.Mesh {
+  const rad = (g.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const floorZ = g.floorZ ?? fallbackFloorZ;
+  const ceilZ = floorZ + (g.ceilingHeight ?? 270);
+
+  const bottom: THREE.Vector3[] = [];
+  const top: THREE.Vector3[] = [];
+  for (const [x, y] of g.outline) {
+    const rx = x * cos - y * sin + g.dx;
+    const ry = x * sin + y * cos + g.dy;
+    bottom.push(toWorld(s, rx, ry, floorZ));
+    top.push(toWorld(s, rx, ry, ceilZ));
+  }
+
+  const positions: number[] = [];
+  const n = g.outline.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const quad = [bottom[i], bottom[j], top[j], bottom[i], top[j], top[i]];
+    for (const p of quad) positions.push(p.x, p.y, p.z);
+  }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geom.computeVertexNormals();
+  const mesh = new THREE.Mesh(
+    geom,
+    new THREE.MeshStandardMaterial({
+      color: 0xa87a26, transparent: true, opacity: 0.28,
+      side: THREE.DoubleSide, depthWrite: false,
+    })
+  );
+  mesh.renderOrder = 2;
+  return mesh;
+}
+
 /** Whether a world XZ point is inside the surveyed ring. */
 function within(fence: [number, number][], x: number, z: number): boolean {
   let hit = false;
@@ -849,10 +1112,20 @@ function within(fence: [number, number][], x: number, z: number): boolean {
  * which turns walking into a wall into sliding along it rather than sticking
  * to it.
  */
+// Extra clearance on each side of a doorway's own width, so the fence still
+// stops you either side of a connected door but not for stepping through it
+// slightly off-centre - a real doorway is forgiving that way too.
+const DOOR_MARGIN = 0.25;
+// Metres past the wall line, along the doorway, that counts as having
+// actually walked through - not just approached. Short of the far room's
+// own furniture, long enough that brushing the opening does not fire it.
+const DOOR_CROSS_DEPTH = 0.4;
+
 function walk(
   s: Scene,
   dt: number,
   onLook?: (look: { yaw: number; at: number | null }) => void,
+  onCrossDoor?: (connectionId: string) => void,
 ): void {
   if (dt) {
     const from = s.camera.position.clone();
@@ -889,7 +1162,26 @@ function walk(
       }
 
       to.y = s.floorY + EYE;
-      if (s.fence.length > 2 && !within(s.fence, to.x, to.z)) {
+
+      // Walking toward a connected door should feel like walking through a
+      // doorway, not bumping a trigger near it: free passage down its own
+      // corridor regardless of the fence, and the room only actually changes
+      // once you have come out the far side of the wall line.
+      let inDoorway = false;
+      for (const door of s.doors) {
+        const dx = to.x - door.mid[0], dz = to.z - door.mid[1];
+        const lateral = dx * door.tangent[0] + dz * door.tangent[1];
+        if (Math.abs(lateral) > door.halfWidth + DOOR_MARGIN) continue;
+        inDoorway = true;
+        const depth = dx * door.outward[0] + dz * door.outward[1];
+        if (depth > DOOR_CROSS_DEPTH) {
+          onCrossDoor?.(door.connectionId);
+          s.goingTo = null;
+          return;
+        }
+      }
+
+      if (!inDoorway && s.fence.length > 2 && !within(s.fence, to.x, to.z)) {
         if (within(s.fence, to.x, from.z)) to.z = from.z;
         else if (within(s.fence, from.x, to.z)) to.x = from.x;
         else {

@@ -1,6 +1,7 @@
 #include "snapir/solid.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -25,11 +26,21 @@
 #include <GProp_GProps.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <Interface_Static.hxx>
+#include <Message_ProgressRange.hxx>
+#include <RWGltf_CafWriter.hxx>
 #include <STEPControl_Writer.hxx>
 #include <StlAPI_Writer.hxx>
+#include <TCollection_ExtendedString.hxx>
+#include <TDataStd_Name.hxx>
+#include <TDF_Label.hxx>
+#include <TDF_LabelSequence.hxx>
+#include <TDocStd_Document.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
@@ -603,21 +614,55 @@ std::string dxf_num(double v) {
   return s.str();
 }
 
-// ASCII DXF (R12 entities), millimetres: a plan section through the solid,
-// not a separate drawing. The cut is a horizontal plane through the shape's
-// own mid-height, which lands inside the wall band for any room this builds
-// (floor and ceiling slabs are thin next to a wall run), so what comes back
-// is both wall faces at once: the surveyed inner ring and the grown outer
-// one, each edge exactly where the B-rep puts it.
-//
-// Edges are written as individual LINE entities rather than chained into
-// polylines - correct either way, and chaining wires back into loops through
-// shared faces isn't worth the code for what is meant to be opened and
-// traced over, not measured from.
-std::string write_dxf(const TopoDS_Shape& shape, const std::string& path) {
+void write_dxf_line(std::ofstream& out, const std::string& layer, const gp_Pnt& a,
+                    const gp_Pnt& b) {
+  out << "0\nLINE\n8\n" << layer << "\n"
+      << "10\n" << dxf_num(a.X()) << "\n20\n" << dxf_num(a.Y()) << "\n30\n"
+      << dxf_num(a.Z()) << "\n"
+      << "11\n" << dxf_num(b.X()) << "\n21\n" << dxf_num(b.Y()) << "\n31\n"
+      << dxf_num(b.Z()) << "\n";
+}
+
+// A DXF layer name has to survive AutoCAD's own rules (no <>/\":;?*|=`); a
+// glTF node name has no such restriction but keeping it to the same safe set
+// makes fixture names read the same way in both formats. Anything outside
+// plain alphanumerics becomes an underscore rather than a file that fails to
+// open, or names that quietly disagree between the two exports.
+std::string sanitize_name(const std::string& raw) {
+  std::string out;
+  out.reserve(raw.size());
+  for (char c : raw) {
+    const unsigned char u = static_cast<unsigned char>(c);
+    out += (std::isalnum(u) || c == '_' || c == '-') ? c : '_';
+  }
+  return out.empty() ? std::string("_") : out;
+}
+
+// The outer ring at a fixed elevation, closed. Floor and ceiling are flat
+// slabs a horizontal section plane never crosses, so they are drawn as their
+// own footprint rather than sectioned like everything else here.
+int write_ring_layer(std::ofstream& out, const std::string& layer,
+                     const std::vector<Pt>& ring, double z_cm) {
+  const double z_mm = z_cm * kCmToMm;
+  for (size_t i = 0; i < ring.size(); ++i) {
+    const Pt& a = ring[i];
+    const Pt& b = ring[(i + 1) % ring.size()];
+    write_dxf_line(out, layer, gp_Pnt(a.x * kCmToMm, a.y * kCmToMm, z_mm),
+                   gp_Pnt(b.x * kCmToMm, b.y * kCmToMm, z_mm));
+  }
+  return static_cast<int>(ring.size());
+}
+
+// One element (a wall, a fixture) as its own layer: a horizontal cut through
+// that element's own mid-height. Edges are written as individual LINE
+// entities rather than chained into polylines - correct either way, and
+// chaining wires back into loops through shared faces isn't worth the code
+// for what is meant to be opened and traced over, not measured from.
+int write_section_layer(std::ofstream& out, const std::string& layer,
+                        const TopoDS_Shape& shape) {
   Bnd_Box box;
   BRepBndLib::Add(shape, box);
-  if (box.IsVoid()) throw BuildError("DXF section failed: empty shape");
+  if (box.IsVoid()) throw BuildError("DXF section failed: empty " + layer);
   double xmin, ymin, zmin, xmax, ymax, zmax;
   box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
   const double mid_z = (zmin + zmax) / 2.0;
@@ -626,7 +671,39 @@ std::string write_dxf(const TopoDS_Shape& shape, const std::string& path) {
   BRepAlgoAPI_Section section(shape, cut_plane, Standard_False);
   section.Approximation(Standard_True);
   section.Build();
-  if (!section.IsDone()) throw BuildError("DXF section failed: " + path);
+  if (!section.IsDone()) throw BuildError("DXF section failed: " + layer);
+
+  int segments = 0;
+  for (TopExp_Explorer ex(section.Shape(), TopAbs_EDGE); ex.More(); ex.Next()) {
+    BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
+    GCPnts_TangentialDeflection pts(curve, kStlAngularDeg * M_PI / 180.0, kStlDeflection);
+    for (int i = 1; i < pts.NbPoints(); ++i) {
+      write_dxf_line(out, layer, pts.Value(i), pts.Value(i + 1));
+      ++segments;
+    }
+  }
+  if (segments == 0) throw BuildError("DXF section carried no geometry: " + layer);
+  return segments;
+}
+
+// ASCII DXF (R12 entities), millimetres: a plan of the room with every
+// element on its own layer, so it opens as separate, selectable pieces
+// rather than one undifferentiated line soup - FLOOR, CEILING, WALL_1,
+// WALL_2, ..., and FIXTURE_<name> for each socket or pipe.
+std::string write_dxf(Room& room, const BuildSettings& cfg,
+                      const FixtureOverrides* overrides, const std::string& path) {
+  const auto planes = room_planes(room, cfg);
+  const Plane& floor = planes.first;
+  const Plane& ceiling = planes.second;
+
+  std::vector<Pt> inner_ring;
+  for (const auto& p : room.outline) inner_ring.push_back({p.x, p.y});
+  const double thickness =
+      cm(room.wall_thickness ? *room.wall_thickness : cfg.wall_thickness);
+  const std::vector<Pt> outer_ring = offset_ring(inner_ring, thickness);
+
+  const double floor_mid_z = floor.pz - cm(cfg.floor_thickness) / 2.0;
+  const double ceiling_mid_z = ceiling.pz + cm(cfg.ceiling_thickness) / 2.0;
 
   ensure_parent(std::filesystem::u8path(path));
   std::ofstream out(std::filesystem::u8path(path), std::ios::binary);
@@ -635,24 +712,107 @@ std::string write_dxf(const TopoDS_Shape& shape, const std::string& path) {
   out << "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n"  // 4 = millimetres
       << "0\nSECTION\n2\nENTITIES\n";
 
-  int segments = 0;
-  for (TopExp_Explorer ex(section.Shape(), TopAbs_EDGE); ex.More(); ex.Next()) {
-    BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
-    GCPnts_TangentialDeflection pts(curve, kStlAngularDeg * M_PI / 180.0, kStlDeflection);
-    for (int i = 1; i < pts.NbPoints(); ++i) {
-      const gp_Pnt a = pts.Value(i), b = pts.Value(i + 1);
-      out << "0\nLINE\n8\n0\n"
-          << "10\n" << dxf_num(a.X()) << "\n20\n" << dxf_num(a.Y()) << "\n30\n"
-          << dxf_num(a.Z()) << "\n"
-          << "11\n" << dxf_num(b.X()) << "\n21\n" << dxf_num(b.Y()) << "\n31\n"
-          << dxf_num(b.Z()) << "\n";
-      ++segments;
-    }
+  int total = 0;
+  total += write_ring_layer(out, "FLOOR", outer_ring, floor_mid_z);
+  total += write_ring_layer(out, "CEILING", outer_ring, ceiling_mid_z);
+
+  for (size_t e = 0; e < room.outline.size(); ++e) {
+    const WallBody wb = wall_body(room, cfg, static_cast<int>(e), overrides);
+    total += write_section_layer(out, "WALL_" + std::to_string(e + 1), wb.shape);
   }
+
+  for (const auto& fx : fixtures(room, inner_ring, cfg, overrides))
+    total += write_section_layer(out, "FIXTURE_" + sanitize_name(fx.name), fx.solid);
+
   out << "0\nENDSEC\n0\nEOF\n";
   out.close();
-  if (segments == 0) throw BuildError("DXF section carried no geometry: " + path);
+  if (total == 0) throw BuildError("DXF carried no geometry: " + path);
   return path;
+}
+
+// Single-body fallback: one section, one layer named "0", the way DXF export
+// worked before elements were split apart. Used when there is no Room to
+// rebuild elements from - a bare shape such as a single exported wall.
+std::string write_dxf_shape(const TopoDS_Shape& shape, const std::string& path) {
+  ensure_parent(std::filesystem::u8path(path));
+  std::ofstream out(std::filesystem::u8path(path), std::ios::binary);
+  if (!out) throw BuildError("DXF write failed: " + path);
+  out << "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n"  // 4 = millimetres
+      << "0\nSECTION\n2\nENTITIES\n";
+  write_section_layer(out, "0", shape);
+  out << "0\nENDSEC\n0\nEOF\n";
+  out.close();
+  return path;
+}
+
+// Mesh a shape in place with the same tolerance STL and glTF both write at.
+// RWGltf_CafWriter needs triangulation precomputed within each shape.
+void mesh_shape(const TopoDS_Shape& shape) {
+  BRepMesh_IncrementalMesh mesher(shape, kStlDeflection, Standard_False,
+                                  kStlAngularDeg * M_PI / 180.0, Standard_True);
+  mesher.Perform();
+  if (!mesher.IsDone()) throw BuildError("meshing failed");
+}
+
+// One shape, one named product in the XCAF document glTF writes from -
+// SketchUp (and anything else reading the .glb) sees it as its own solid
+// group, not fused into whatever else is in the file.
+void add_glb_part(const Handle(XCAFDoc_ShapeTool)& shapes, const std::string& name,
+                  const TopoDS_Shape& shape) {
+  mesh_shape(shape);
+  const TDF_Label label = shapes->AddShape(shape, /*makeAssembly=*/false);
+  TDataStd_Name::Set(label, TCollection_ExtendedString(name.c_str(), Standard_True));
+}
+
+std::string write_glb_document(const Handle(TDocStd_Document)& doc, const std::string& path) {
+  ensure_parent(std::filesystem::u8path(path));
+  const Handle(XCAFDoc_ShapeTool) shapes = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+  TDF_LabelSequence roots;
+  shapes->GetFreeShapes(roots);
+  if (roots.IsEmpty()) throw BuildError("GLB carried no geometry: " + path);
+
+  RWGltf_CafWriter writer(TCollection_AsciiString(path.c_str()), /*theIsBinary=*/true);
+  const TColStd_IndexedDataMapOfStringString fileInfo;
+  if (!writer.Perform(doc, roots, nullptr, fileInfo, Message_ProgressRange()))
+    throw BuildError("GLB write failed: " + path);
+  return path;
+}
+
+// Binary glTF: every element - floor, ceiling, each wall, each fixture - as
+// its own named solid mesh in one file, the same split write_dxf makes for
+// layers. Unlike DXF, glTF actually carries volumes, so this is what to hand
+// SketchUp (or anything else with no STEP/IGES importer) for separate,
+// accurate bodies rather than a flattened plan.
+std::string write_glb(Room& room, const BuildSettings& cfg, const FixtureOverrides* overrides,
+                      const std::string& path) {
+  Handle(TDocStd_Document) doc;
+  XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc);
+  const Handle(XCAFDoc_ShapeTool) shapes = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+
+  add_glb_part(shapes, "FLOOR", floor_body(room, cfg));
+  add_glb_part(shapes, "CEILING", ceiling_body(room, cfg));
+
+  for (size_t e = 0; e < room.outline.size(); ++e) {
+    const WallBody wb = wall_body(room, cfg, static_cast<int>(e), overrides);
+    add_glb_part(shapes, "WALL_" + std::to_string(e + 1), wb.shape);
+  }
+
+  std::vector<Pt> inner_ring;
+  for (const auto& p : room.outline) inner_ring.push_back({p.x, p.y});
+  for (const auto& fx : fixtures(room, inner_ring, cfg, overrides))
+    add_glb_part(shapes, "FIXTURE_" + sanitize_name(fx.name), fx.solid);
+
+  return write_glb_document(doc, path);
+}
+
+// Single-body fallback, matching write_dxf_shape: one named part, for a bare
+// shape with no Room to rebuild elements from.
+std::string write_glb_shape(const TopoDS_Shape& shape, const std::string& path) {
+  Handle(TDocStd_Document) doc;
+  XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc);
+  const Handle(XCAFDoc_ShapeTool) shapes = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+  add_glb_part(shapes, "BODY", shape);
+  return write_glb_document(doc, path);
 }
 
 }  // namespace
@@ -663,7 +823,7 @@ const std::vector<ExportFormat>& export_formats() {
   // export_dxf(); export_shape already dispatches on fmt, nothing else to
   // redesign.
   static const std::vector<ExportFormat> v = {
-      {"step", ".step"}, {"stl", ".stl"}, {"dxf", ".dxf"}};
+      {"step", ".step"}, {"stl", ".stl"}, {"dxf", ".dxf"}, {"glb", ".glb"}};
   return v;
 }
 
@@ -693,13 +853,22 @@ std::string export_step(const TopoDS_Shape& shape, const std::string& path,
 }
 
 std::string export_shape(const TopoDS_Shape& shape, const std::string& base_path,
-                         const std::string& fmt, const std::string& schema) {
+                         const std::string& fmt, const std::string& schema,
+                         Room* room, const BuildSettings* cfg,
+                         const FixtureOverrides* fixture_overrides) {
   if (!is_export_format(fmt)) throw BuildError("Unknown export format: " + fmt);
   const std::string path = base_path + export_suffix(fmt);
   ensure_parent(std::filesystem::u8path(path));
 
   if (fmt == "step") return export_step(shape, path, schema);
-  if (fmt == "dxf") return write_dxf(shape, path);
+  if (fmt == "dxf") {
+    if (room && cfg) return write_dxf(*room, *cfg, fixture_overrides, path);
+    return write_dxf_shape(shape, path);
+  }
+  if (fmt == "glb") {
+    if (room && cfg) return write_glb(*room, *cfg, fixture_overrides, path);
+    return write_glb_shape(shape, path);
+  }
   return write_stl(shape, path);
 }
 
@@ -772,6 +941,33 @@ WallBody wall_body(Room& room, const BuildSettings& cfg, int edge,
     throw BuildError(room.name + ": wall " + std::to_string(edge + 1) +
                      " is not a valid solid");
   return {body, length, count};
+}
+
+TopoDS_Shape floor_body(const Room& room, const BuildSettings& cfg) {
+  const auto planes = room_planes(room, cfg);
+  const Plane& floor = planes.first;
+  std::vector<Pt> inner_ring;
+  for (const auto& p : room.outline) inner_ring.push_back({p.x, p.y});
+  const double thickness =
+      cm(room.wall_thickness ? *room.wall_thickness : cfg.wall_thickness);
+  const std::vector<Pt> outer_ring = offset_ring(inner_ring, thickness);
+  const Plane outer_floor{floor.px, floor.py, floor.pz - cm(cfg.floor_thickness),
+                          floor.nx, floor.ny, floor.nz};
+  return prism(outer_ring, outer_floor, floor);
+}
+
+TopoDS_Shape ceiling_body(const Room& room, const BuildSettings& cfg) {
+  const auto planes = room_planes(room, cfg);
+  const Plane& ceiling = planes.second;
+  std::vector<Pt> inner_ring;
+  for (const auto& p : room.outline) inner_ring.push_back({p.x, p.y});
+  const double thickness =
+      cm(room.wall_thickness ? *room.wall_thickness : cfg.wall_thickness);
+  const std::vector<Pt> outer_ring = offset_ring(inner_ring, thickness);
+  const Plane outer_ceiling{ceiling.px, ceiling.py,
+                            ceiling.pz + cm(cfg.ceiling_thickness), ceiling.nx,
+                            ceiling.ny, ceiling.nz};
+  return prism(outer_ring, ceiling, outer_ceiling);
 }
 
 }  // namespace snapir

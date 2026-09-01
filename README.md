@@ -1,7 +1,8 @@
 # Snapir Design X
 
 Leica iCON room surveys to solid bodies. Interior volumes, exact B-rep out, and
-an STL or a DXF plan alongside it for viewing and 2D work.
+an STL, a DXF plan, or a split-body GLB alongside it for viewing, 2D work, and
+tools with no STEP importer.
 
 ## Status
 
@@ -11,16 +12,22 @@ input; the other four have real problems in the data and say so.
 
 ## Export formats
 
-Three, for three different jobs.
+Four, for four different jobs.
 
 | Format | Extension | What it is for |
 |---|---|---|
 | **STEP**, schema AP203 / AP214 / AP242 | `.step` | The body to work from. Exact B-rep: planes stay planes and the surveyed corner stays where the instrument put it. Opens in SolidWorks, Geomagic Design X, Rhino, Revit, Inventor, Fusion, CATIA. |
 | **STL**, binary | `.stl` | Viewing the room in something that will not open a STEP file. Triangles, so nothing should be measured off it. |
-| **DXF**, R12 ASCII | `.dxf` | A plan. A horizontal section through the same body, at its own mid-height, so it carries both wall faces - the surveyed inner ring and the grown outer one. For AutoCAD or anything else that only wants 2D. |
+| **DXF**, R12 ASCII | `.dxf` | A plan. Every element on its own layer - FLOOR, CEILING, WALL_1, WALL_2, ..., and one FIXTURE_&lt;name&gt; per socket or pipe - each wall and fixture cut at its own mid-height, floor and ceiling as their footprint. Opens as separate, selectable pieces rather than one line soup. For AutoCAD or anything else that only wants 2D. |
+| **GLB**, binary glTF | `.glb` | Solid meshes, split the same way DXF is - floor, ceiling, each wall, each fixture as its own named body in one file. For SketchUp and anything else with no STEP/IGES importer, where a merged single body would defeat the point. |
+
+None of the four is for moving the project itself between machines. That is
+what `.sdxp` is for: one project - survey folder, overrides, connected doors -
+zipped into a single file that opens on another install of Snapir with
+nothing else needed. Export and import both live on the Projects screen.
 
 `native/build/check_export` measures what each one costs rather than claiming
-it. Every room is built, written in all three formats and read back through the
+it. Every room is built, written in all four formats and read back through the
 same kernel. Across the 28-room reference survey:
 
 ```
@@ -28,11 +35,13 @@ STEP and DXF exact everywhere, worst STL error 0.000013%
 ```
 
 STEP returns with the same face count and zero volume drift. DXF is checked
-against an independent re-section of the same body and lands within float
-noise. The STL is meshed at 0.1 mm, and because the rooms are almost entirely
-flat the triangles land nearly on the real surfaces — the worst room is out by
-about one part in eight million by volume. It is still triangles, and still not
-what to measure from.
+layer by layer - each wall's own re-section, the floor and ceiling footprint,
+one fixture layer per fixture - and lands within float noise. GLB is checked
+the same way: body count and summed volume against the same elements rebuilt
+independently. The STL is meshed at 0.1 mm, and because the rooms are almost
+entirely flat the triangles land nearly on the real surfaces — the worst room
+is out by about one part in eight million by volume. It is still triangles,
+and still not what to measure from.
 
 **`.sldprt` cannot be written**, by Snapir or by anything else outside
 SolidWorks: the format is closed and undocumented. The same is true of

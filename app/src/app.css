@@ -279,6 +279,15 @@ button{font-family:inherit}
   .panowarn{animation:none}
 }
 
+.vp .linkbar{
+  position:absolute;left:50%;bottom:calc(60px + var(--sa-b));transform:translateX(-50%);
+  pointer-events:auto;display:flex;align-items:center;gap:10px;
+  padding:9px 13px;border-radius:12px;
+  background:var(--panel);border:1px solid var(--line-2);box-shadow:var(--sh-2);
+  font-size:12.5px;white-space:nowrap;
+}
+.vp .linkbar b{color:var(--gold-ink)}
+
 .insp{background:var(--rail);border-left:1px solid var(--line);overflow:auto;
   padding:16px calc(16px + var(--sa-r)) calc(16px + var(--sa-b)) 16px;
   display:flex;flex-direction:column;gap:16px;position:relative}
@@ -321,6 +330,12 @@ button{font-family:inherit}
 .swrow:hover{background:var(--sunk)}
 .swrow b{font-size:13.5px;font-weight:550;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
+
+/* .swpop is position:absolute against .swrooms's own position:relative - fine
+   where it started, wrong anywhere else. This is that dialog centred on the
+   viewport instead, for callers with no positioned ancestor to anchor to. */
+.doorspop{position:fixed;top:50%;left:50%;right:auto;bottom:auto;
+  transform:translate(-50%,-50%);width:min(420px,92vw)}
 
 /* sketch overlay */
 .sketch{position:absolute;inset:0;pointer-events:auto}

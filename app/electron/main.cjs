@@ -5,6 +5,7 @@
  * and opens the window. The user never sees a port, a URL, or a terminal.
  */
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
@@ -175,6 +176,11 @@ ${url}`);
     dialog.showErrorBox("Snapir stopped responding",
       `The interface process ended: ${details.reason}`);
   });
+  win.on("unresponsive", () => console.error("[main] window went unresponsive"));
+  win.on("responsive", () => console.error("[main] window responsive again"));
+  win.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    console.log(`[renderer] ${message} (${sourceId}:${line})`);
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
@@ -191,6 +197,18 @@ ipcMain.handle("pick-folder", async () => {
   const r = await dialog.showOpenDialog(win, {
     title: "Choose a survey folder",
     properties: ["openDirectory"],
+  });
+  return r.canceled ? null : r.filePaths[0];
+});
+
+// A single .sdxp to import, wherever it is -- unlike a survey folder, there
+// is no directory to browse into, so this is the one picker that has no
+// FolderPicker-style fallback.
+ipcMain.handle("pick-sdxp", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: "Import project",
+    filters: [{ name: "Snapir Design X project", extensions: ["sdxp"] }],
+    properties: ["openFile"],
   });
   return r.canceled ? null : r.filePaths[0];
 });
@@ -222,6 +240,20 @@ ipcMain.handle("backend-ready", async () => {
   }
 });
 
+// Checks GitHub Releases for a newer build. A found update downloads in the
+// background and installs itself the moment it lands - silent, no prompt,
+// so it never interrupts a session. A failed check (offline, no update, no
+// release yet) is not an error: the app just keeps running what it has.
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = false;
+autoUpdater.on("error", (err) => console.error("[update] error:", err));
+autoUpdater.on("update-downloaded", () => autoUpdater.quitAndInstall(true, true));
+
+function checkForUpdates() {
+  if (!app.isPackaged) return;  // dev builds have no update feed to check
+  autoUpdater.checkForUpdates().catch((err) => console.error("[update] check failed:", err));
+}
+
 // One window per machine. A second launch focuses the first instead of
 // starting a rival app and a rival backend.
 if (!app.requestSingleInstanceLock()) {
@@ -237,6 +269,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     createWindow();
     await startBackend();
+    checkForUpdates();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

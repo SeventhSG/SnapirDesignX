@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -32,6 +33,7 @@
 #include <Message.hxx>
 #include <Message_Messenger.hxx>
 #include <Message_PrinterOStream.hxx>
+#include "snapir/archive.hpp"
 #include "snapir/designx.hpp"
 #include "snapir/service.hpp"
 #include "snapir/geometry.hpp"
@@ -46,7 +48,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.2.4";
+constexpr const char* kVersion = "1.3.0";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -81,6 +83,15 @@ std::string ascii_upper(const std::string& v) {
     const auto u = static_cast<unsigned char>(c);
     if (u < 128) c = static_cast<char>(std::toupper(u));
   }
+  return s;
+}
+
+// A project name is free text the operator typed; a filename built from it
+// is not, so anything a filesystem would choke on becomes an underscore.
+std::string safe_filename(const std::string& name) {
+  std::string s = name.empty() ? "project" : name;
+  for (char& c : s)
+    if (std::strchr("\\/:*?\"<>|", c)) c = '_';
   return s;
 }
 
@@ -566,6 +577,35 @@ int serve(const std::string& host, int port, const std::string& web_root) {
     ok_json(res, Json{{"ok", true}});
   });
 
+  // A .sdxp already picked and sitting at a local path -- the shell resolves
+  // whatever the platform's picker hands back (a save dialog, a document
+  // picker) into a plain path before this is ever called, the same way it
+  // already does for a survey folder.
+  svr.Post("/projects/import-sdxp", [&](const httplib::Request& req,
+                                        httplib::Response& res) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    try {
+      const Json body = Json::parse(req.body);
+      const std::string src = body.at("path").get<std::string>();
+      const std::string survey_dir =
+          (fs::u8path(app_dir()) / "imported" / new_id()).u8string();
+
+      const ImportedProject imported = import_sdxp(src, survey_dir);
+      ProjectRecord rec;
+      rec.name = imported.name;
+      rec.folder = survey_dir;
+      rec.created_at = imported.created_at;
+      rec.thickness = imported.thickness;
+      rec.overrides = imported.overrides;
+      rec.connections = imported.connections;
+
+      const ProjectRecord& p = store.adopt(std::move(rec));
+      ok_json(res, Json{{"id", p.id}, {"name", p.name}, {"folder", p.folder}});
+    } catch (const std::exception& e) {
+      fail(res, 422, e.what());
+    }
+  });
+
   svr.Patch(R"(/projects/([^/]+))", [&](const httplib::Request& req,
                                         httplib::Response& res) {
     std::lock_guard<std::mutex> guard(g_lock);
@@ -583,6 +623,26 @@ int serve(const std::string& host, int port, const std::string& web_root) {
       fail(res, 404, "No such project");
     } catch (const std::exception& e) {
       fail(res, 400, e.what());
+    }
+  });
+
+  // Writes the .sdxp into this device's app data, same as a STEP export
+  // writes into the survey folder. The shell then moves it wherever the
+  // operator picked, since only the shell knows how to show that dialog.
+  svr.Post(R"(/projects/([^/]+)/export-sdxp)", [&](const httplib::Request& req,
+                                                    httplib::Response& res) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    try {
+      const ProjectRecord& p = store.get(req.matches[1]);
+      const fs::path out =
+          fs::u8path(app_dir()) / "exports" / fs::u8path(safe_filename(p.name) + ".sdxp");
+      export_sdxp(p, out.u8string());
+      ok_json(res, Json{{"path", out.u8string()},
+                        {"bytes", static_cast<long long>(fs::file_size(out))}});
+    } catch (const std::out_of_range&) {
+      fail(res, 404, "No such project");
+    } catch (const std::exception& e) {
+      fail(res, 422, e.what());
     }
   });
 
@@ -712,6 +772,97 @@ int serve(const std::string& host, int port, const std::string& web_root) {
               }
             });
 
+  // ------------------------------------------------------------ connections
+  //
+  // A door hooked to another door, so a walkthrough can cross from the room
+  // on one side to the room on the other. Rooms keep their own independent
+  // survey coordinates always; the alignment (dx, dy, rotationDeg) is
+  // computed by the caller (the plan view, from the two openings' own
+  // geometry) and just persisted here, the same way fixture overrides are.
+
+  svr.Get(R"(/projects/([^/]+)/connections)",
+          [&](const httplib::Request& req, httplib::Response& res) {
+            std::lock_guard<std::mutex> guard(g_lock);
+            try {
+              const ProjectRecord& p = store.get(req.matches[1]);
+              Json out = Json::array();
+              for (const auto& c : p.connections) out.push_back(to_json(c));
+              ok_json(res, Json{{"connections", out}});
+            } catch (const std::out_of_range&) {
+              fail(res, 404, "No such project");
+            }
+          });
+
+  svr.Post(R"(/projects/([^/]+)/connections)",
+           [&](const httplib::Request& req, httplib::Response& res) {
+             std::lock_guard<std::mutex> guard(g_lock);
+             try {
+               ProjectRecord& p = store.get(req.matches[1]);
+               const Json b = Json::parse(req.body);
+
+               Connection c;
+               c.id = new_id();
+               c.room_a = b.at("roomA").get<std::string>();
+               c.opening_a = b.at("openingA").get<int>();
+               c.room_b = b.at("roomB").get<std::string>();
+               c.opening_b = b.at("openingB").get<int>();
+               c.dx = b.value("dx", 0.0);
+               c.dy = b.value("dy", 0.0);
+               c.rotation_deg = b.value("rotationDeg", 0.0);
+               c.enabled = b.value("enabled", true);
+
+               p.connections.push_back(c);
+               store.save();
+               ok_json(res, to_json(c));
+             } catch (const std::out_of_range&) {
+               fail(res, 404, "No such project");
+             } catch (const std::exception& e) {
+               fail(res, 422, e.what());
+             }
+           });
+
+  svr.Patch(R"(/projects/([^/]+)/connections/([^/]+))",
+            [&](const httplib::Request& req, httplib::Response& res) {
+              std::lock_guard<std::mutex> guard(g_lock);
+              const std::string pid = req.matches[1], cid = req.matches[2];
+              try {
+                ProjectRecord& p = store.get(pid);
+                const auto it = std::find_if(p.connections.begin(), p.connections.end(),
+                                             [&](const Connection& c) { return c.id == cid; });
+                if (it == p.connections.end()) { fail(res, 404, "No such connection"); return; }
+
+                const Json b = Json::parse(req.body);
+                if (b.contains("dx")) it->dx = b["dx"].get<double>();
+                if (b.contains("dy")) it->dy = b["dy"].get<double>();
+                if (b.contains("rotationDeg")) it->rotation_deg = b["rotationDeg"].get<double>();
+                if (b.contains("enabled")) it->enabled = b["enabled"].get<bool>();
+
+                store.save();
+                ok_json(res, to_json(*it));
+              } catch (const std::out_of_range&) {
+                fail(res, 404, "No such project");
+              } catch (const std::exception& e) {
+                fail(res, 422, e.what());
+              }
+            });
+
+  svr.Delete(R"(/projects/([^/]+)/connections/([^/]+))",
+             [&](const httplib::Request& req, httplib::Response& res) {
+               std::lock_guard<std::mutex> guard(g_lock);
+               const std::string pid = req.matches[1], cid = req.matches[2];
+               try {
+                 ProjectRecord& p = store.get(pid);
+                 auto& v = p.connections;
+                 v.erase(std::remove_if(v.begin(), v.end(),
+                                        [&](const Connection& c) { return c.id == cid; }),
+                        v.end());
+                 store.save();
+                 ok_json(res, Json{{"ok", true}});
+               } catch (const std::out_of_range&) {
+                 fail(res, 404, "No such project");
+               }
+             });
+
   // --------------------------------------------------------------- settings
 
   svr.Get("/settings", [&](const httplib::Request&, httplib::Response& res) {
@@ -783,7 +934,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                    to_fixture_overrides(store.override_if_any(pid, name));
                const TopoDS_Shape shape = build_room(room, cfg, nullptr, &fx);
                const std::string path = export_shape(
-                   shape, (out / fs::u8path(name)).u8string(), fmt, schema);
+                   shape, (out / fs::u8path(name)).u8string(), fmt, schema,
+                   &room, &cfg, &fx);
 
                RoomOverride& ov = store.override_for(pid, name);
                ov.step_path = path;

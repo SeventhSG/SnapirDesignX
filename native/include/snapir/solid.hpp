@@ -72,14 +72,18 @@ SolidStats solid_stats(const TopoDS_Shape& shape);
 std::string export_step(const TopoDS_Shape& shape, const std::string& path,
                         const std::string& schema = "AP214");
 
-// The three ways a body leaves.
+// The four ways a body leaves.
 //
 // STEP is the one to work from: exact B-rep, planes stay planes and the
 // surveyed corner stays where the instrument put it. STL is triangles and is
 // only for looking at the room in something that will not open a STEP file;
-// nothing downstream should be measured off it. DXF is a plan: a horizontal
-// section through the same B-rep, for opening in AutoCAD or handing to
-// someone who only has a 2D tool.
+// nothing downstream should be measured off it. DXF is a plan with every
+// element on its own layer - floor, ceiling, each wall, each fixture - for
+// opening in AutoCAD or handing to someone who only has a 2D tool. GLB
+// (binary glTF) carries the same per-element split as real solid meshes
+// instead of 2D lines, each its own named node in one file - for SketchUp
+// and anything else with no STEP/IGES importer but that still needs actual
+// separate bodies rather than a flattened plan.
 //
 // DWG is not offered. It is Autodesk's closed, undocumented format; writing
 // it for real needs Autodesk's own libraries or the Open Design Alliance's
@@ -101,10 +105,19 @@ std::string export_suffix(const std::string& fmt);
 // Write one body in millimetres. base_path carries no extension; the one for
 // the format is appended, and the written path is returned.
 //
-// schema applies to STEP only and is ignored by STL.
+// schema applies to STEP only and is ignored by STL. DXF and GLB ignore
+// schema; when room and cfg are given they also ignore shape and instead
+// write every element (floor, ceiling, each wall, each fixture) as its own
+// DXF layer or glTF node, rebuilding those elements itself the way wall_body
+// and fixtures already do. Without room and cfg, DXF falls back to
+// sectioning the given shape alone onto one layer, and GLB to meshing it as
+// one unnamed part - for a bare body, such as a single exported wall, that
+// has no Room to rebuild elements from.
 std::string export_shape(const TopoDS_Shape& shape, const std::string& base_path,
                          const std::string& fmt = "step",
-                         const std::string& schema = "AP214");
+                         const std::string& schema = "AP214",
+                         Room* room = nullptr, const BuildSettings* cfg = nullptr,
+                         const FixtureOverrides* fixture_overrides = nullptr);
 
 // Which outline edge a point in the plan belongs to. Takes metres, because that
 // is what the viewport reports for a picked face.
@@ -119,6 +132,14 @@ struct WallBody {
 // One wall of the room as its own usable solid.
 WallBody wall_body(Room& room, const BuildSettings& cfg, int edge,
                    const FixtureOverrides* fixture_overrides = nullptr);
+
+// The floor slab as its own solid, between its underside and the room's own
+// floor plane on top.
+TopoDS_Shape floor_body(const Room& room, const BuildSettings& cfg);
+
+// The ceiling slab as its own solid, between the room's own ceiling plane
+// and its topside.
+TopoDS_Shape ceiling_body(const Room& room, const BuildSettings& cfg);
 
 // Every service fixture in the room, each carrying the point it came from.
 std::vector<Fixture> fixtures(const Room& room, const std::vector<Pt>& ring,

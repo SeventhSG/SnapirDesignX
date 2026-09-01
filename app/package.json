@@ -1,7 +1,7 @@
 {
   "name": "snapir-design-x",
   "productName": "Snapir Design X",
-  "version": "1.2.4",
+  "version": "1.3.0",
   "private": true,
   "description": "Leica iCON room surveys to solid bodies",
   "author": {
@@ -12,9 +12,11 @@
     "dev": "concurrently -k -n vite,electron -c cyan,yellow \"vite\" \"wait-on tcp:5173 && cross-env SNAPIR_DEV=1 electron .\"",
     "build": "vite build",
     "backend": "python ../tools/bundle_backend.py",
-    "dist": "npm run build && electron-builder --win nsis"
+    "dist": "npm run build && electron-builder --win nsis",
+    "release": "npm run build && electron-builder --win nsis --publish always"
   },
   "dependencies": {
+    "electron-updater": "^6.3.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.169.0"
@@ -39,6 +41,11 @@
     "directories": {
       "output": "release",
       "buildResources": "buildResources"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "SeventhSG",
+      "repo": "SnapirDesignX"
     },
     "files": [
       "dist/**",

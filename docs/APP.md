@@ -139,9 +139,10 @@ show: there is one React app behind all three shells.
 |---|---|---|
 | STEP | `.step` | The body to work from. Schema AP203, AP214 or AP242; AP242 is the current one and what SolidWorks and Design X prefer. |
 | STL | `.stl` | Binary, meshed at 0.1 mm. For viewing only - it is triangles, and nothing should be measured off it. |
-| DXF | `.dxf` | R12 ASCII. A horizontal section through the same body, for AutoCAD or anything else that only wants a plan. |
+| DXF | `.dxf` | R12 ASCII. Every element - floor, ceiling, each wall, each fixture - on its own layer, for AutoCAD or anything else that only wants a plan. |
+| GLB | `.glb` | Binary glTF. Same per-element split as DXF, but real solid meshes - for SketchUp and anything else with no STEP/IGES importer. |
 
-All three are written in millimetres. `.sldprt` and `.dwg` are not writable by
+All four are written in millimetres. `.sldprt` and `.dwg` are not writable by
 anything outside SolidWorks and Autodesk respectively - see the README.
 
 ## Escape hatch

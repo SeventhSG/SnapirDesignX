@@ -68,7 +68,8 @@ int main(int argc, char** argv) {
 
     if (!fmt.empty()) {
       try {
-        emit(n, "wrote", export_shape(shape, out_dir + "/" + n, fmt));
+        emit(n, "wrote", export_shape(shape, out_dir + "/" + n, fmt,
+                                      cfg.step_schema, &room, &cfg));
       } catch (const std::exception& e2) {
         emit(n, "wrote", std::string("ERROR ") + e2.what());
       }

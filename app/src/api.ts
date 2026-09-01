@@ -40,6 +40,14 @@ export interface Project {
   openedAt: string; missing: boolean; thickness: number;
 }
 
+/** One door hooked to another, so a walkthrough can cross between rooms.
+ *  Each room keeps its own independent survey coordinates; dx/dy/rotationDeg
+ *  place room B's origin in room A's local frame. */
+export interface Connection {
+  id: string; roomA: string; openingA: number; roomB: string; openingB: number;
+  dx: number; dy: number; rotationDeg: number; enabled: boolean;
+}
+
 export interface FaceInfo {
   id: number; kind: string; area: number; role: string;
   normal: [number, number, number]; centroid: [number, number, number];
@@ -102,6 +110,13 @@ export const api = {
     }),
   deleteProject: (id: string) =>
     call<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
+  exportSdxp: (id: string) =>
+    call<{ path: string; bytes: number }>(`/projects/${id}/export-sdxp`,
+      { method: "POST" }),
+  importSdxp: (path: string) =>
+    call<{ id: string; name: string; folder: string }>("/projects/import-sdxp", {
+      method: "POST", body: JSON.stringify({ path }),
+    }),
   rooms: async (id: string) => {
     const d = await call<{ id: string; name: string; folder: string;
                           thickness: number; rooms: Room[] }>(`/projects/${id}/rooms`);
@@ -136,6 +151,20 @@ export const api = {
     call<{ path: string; bytes: number; format: string }>(
       `/projects/${id}/rooms/${encodeURIComponent(name)}/export-designx?fmt=${fmt}`,
       { method: "POST" }),
+  connections: (id: string) =>
+    call<{ connections: Connection[] }>(`/projects/${id}/connections`),
+  createConnection: (id: string, body: {
+    roomA: string; openingA: number; roomB: string; openingB: number;
+    dx: number; dy: number; rotationDeg: number;
+  }) => call<Connection>(`/projects/${id}/connections`, {
+    method: "POST", body: JSON.stringify(body),
+  }),
+  patchConnection: (id: string, cid: string, body: Record<string, unknown>) =>
+    call<Connection>(`/projects/${id}/connections/${cid}`, {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
+  deleteConnection: (id: string, cid: string) =>
+    call<{ ok: boolean }>(`/projects/${id}/connections/${cid}`, { method: "DELETE" }),
   settings: () => call<Record<string, unknown>>("/settings"),
   patchSettings: (body: Record<string, unknown>) =>
     call<Record<string, unknown>>("/settings", {

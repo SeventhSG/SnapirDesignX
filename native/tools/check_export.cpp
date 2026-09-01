@@ -12,6 +12,11 @@
 //         What has to hold is that the file carries the same footprint as an
 //         independent re-section of the body, computed here rather than
 //         trusted from the writer.
+//   GLB   carries one independent solid per element - floor, ceiling, each
+//         wall, each fixture - so what has to hold is the body count and the
+//         summed volume of those elements, rebuilt here the same way the
+//         writer does, read back through the same triangle-volume check STL
+//         uses.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -19,17 +24,32 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <string>
 
 #include <Bnd_Box.hxx>
 #include <BRepAlgoAPI_Section.hxx>
 #include <BRepBndLib.hxx>
+#include <BRep_Tool.hxx>
+#include <Message_ProgressRange.hxx>
 #include <Poly_Triangulation.hxx>
+#include <RWGltf_CafReader.hxx>
 #include <RWStl.hxx>
 #include <STEPControl_Reader.hxx>
+#include <TDF_Label.hxx>
+#include <TDF_LabelSequence.hxx>
+#include <TDocStd_Document.hxx>
+#include <TopAbs_ShapeEnum.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
+#include <TopoDS.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Trsf.hxx>
 
 #include "snapir/parser.hpp"
 #include "snapir/solid.hpp"
@@ -73,9 +93,37 @@ double mesh_volume_m3(const Handle(Poly_Triangulation) & tri) {
   return std::abs(six_v) / 6.0 / 1e9;
 }
 
+// Same divergence-theorem volume, summed over every triangulated face in a
+// shape rather than one bare triangulation - a GLB read back carries one
+// independent solid per element, not one mesh for the whole file.
+double shape_mesh_volume_m3(const TopoDS_Shape& shape) {
+  double six_v = 0.0;
+  for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
+    TopLoc_Location loc;
+    const Handle(Poly_Triangulation) tri =
+        BRep_Tool::Triangulation(TopoDS::Face(ex.Current()), loc);
+    if (tri.IsNull()) continue;
+    const gp_Trsf trsf = loc.Transformation();
+    for (int i = 1; i <= tri->NbTriangles(); ++i) {
+      int a, b, c;
+      tri->Triangle(i).Get(a, b, c);
+      const gp_Pnt p = tri->Node(a).Transformed(trsf);
+      const gp_Pnt q = tri->Node(b).Transformed(trsf);
+      const gp_Pnt r = tri->Node(c).Transformed(trsf);
+      six_v += p.X() * (q.Y() * r.Z() - q.Z() * r.Y()) -
+               p.Y() * (q.X() * r.Z() - q.Z() * r.X()) +
+               p.Z() * (q.X() * r.Y() - q.Y() * r.X());
+    }
+  }
+  return std::abs(six_v) / 6.0 / 1e9;
+}
+
 struct Extent {
-  double xmin, ymin, xmax, ymax;
-  int segments;
+  double xmin = std::numeric_limits<double>::max();
+  double ymin = std::numeric_limits<double>::max();
+  double xmax = std::numeric_limits<double>::lowest();
+  double ymax = std::numeric_limits<double>::lowest();
+  int segments = 0;
 };
 
 // The same horizontal cut write_dxf makes, redone here from the shape rather
@@ -105,17 +153,17 @@ Extent section_xy_extent(const TopoDS_Shape& shape) {
   return {cxmin, cymin, cxmax, cymax, 0};
 }
 
-// XY footprint of every LINE entity's endpoints in a DXF's ENTITIES section.
-Extent dxf_xy_extent(const std::string& path) {
+// XY footprint of every LINE entity's endpoints in a DXF's ENTITIES section,
+// bucketed by layer (group code 8) - each element (a wall, the floor, a
+// fixture) now writes to its own layer, so this checks them independently
+// rather than pretending the file is one undifferentiated body.
+std::map<std::string, Extent> dxf_layers(const std::string& path) {
   std::ifstream in(path, std::ios::binary);
   if (!in) throw std::runtime_error("DXF read failed: " + path);
 
-  double xmin = std::numeric_limits<double>::max();
-  double ymin = std::numeric_limits<double>::max();
-  double xmax = std::numeric_limits<double>::lowest();
-  double ymax = std::numeric_limits<double>::lowest();
-  int segments = 0;
+  std::map<std::string, Extent> layers;
   bool in_entities = false;
+  std::string layer = "0";
   double x = 0.0;
   bool have_x = false;
 
@@ -124,21 +172,23 @@ Extent dxf_xy_extent(const std::string& path) {
     const int code = std::stoi(code_line);
     if (code == 2 && value_line == "ENTITIES") { in_entities = true; continue; }
     if (!in_entities) continue;
+    if (code == 8) { layer = value_line; continue; }
     if (code == 10 || code == 11) {
       x = std::stod(value_line);
       have_x = true;
     } else if ((code == 20 || code == 21) && have_x) {
       const double y = std::stod(value_line);
-      xmin = std::min(xmin, x);
-      xmax = std::max(xmax, x);
-      ymin = std::min(ymin, y);
-      ymax = std::max(ymax, y);
+      Extent& e = layers[layer];
+      e.xmin = std::min(e.xmin, x);
+      e.xmax = std::max(e.xmax, x);
+      e.ymin = std::min(e.ymin, y);
+      e.ymax = std::max(e.ymax, y);
       have_x = false;
-      if (code == 21) ++segments;
+      if (code == 21) ++e.segments;
     }
   }
-  if (segments == 0) throw std::runtime_error("no LINE entities in " + path);
-  return {xmin, ymin, xmax, ymax, segments};
+  if (layers.empty()) throw std::runtime_error("no LINE entities in " + path);
+  return layers;
 }
 
 }  // namespace
@@ -171,7 +221,8 @@ int main(int argc, char** argv) {
       std::string verdict;
       try {
         const std::string path =
-            export_shape(shape, (out / fs::u8path(room.name)).u8string(), fmt);
+            export_shape(shape, (out / fs::u8path(room.name)).u8string(), fmt,
+                        cfg.step_schema, &room, &cfg);
 
         if (fmt == "step") {
           STEPControl_Reader reader;
@@ -186,15 +237,100 @@ int main(int argc, char** argv) {
                     " faces=" + std::to_string(got.faces) + "/" +
                     std::to_string(src.faces) + " drift=" + num(drift);
         } else if (fmt == "dxf") {
-          const Extent want = section_xy_extent(shape);
-          const Extent got = dxf_xy_extent(path);
-          const double drift =
-              std::max({std::abs(got.xmin - want.xmin), std::abs(got.ymin - want.ymin),
-                        std::abs(got.xmax - want.xmax), std::abs(got.ymax - want.ymax)});
-          const bool ok = drift <= kDxfTolMm;
+          const auto layers = dxf_layers(path);
+          double worst_drift = 0.0;
+
+          int wall_ok = 0;
+          const int wall_total = static_cast<int>(room.outline.size());
+          for (int e = 0; e < wall_total; ++e) {
+            const auto it = layers.find("WALL_" + std::to_string(e + 1));
+            if (it == layers.end()) continue;
+            const WallBody wb = wall_body(room, cfg, e);
+            const Extent want = section_xy_extent(wb.shape);
+            const double drift = std::max(
+                {std::abs(it->second.xmin - want.xmin), std::abs(it->second.ymin - want.ymin),
+                 std::abs(it->second.xmax - want.xmax), std::abs(it->second.ymax - want.ymax)});
+            worst_drift = std::max(worst_drift, drift);
+            if (drift <= kDxfTolMm) ++wall_ok;
+          }
+
+          std::vector<Pt> inner_ring;
+          for (const auto& p : room.outline) inner_ring.push_back({p.x, p.y});
+          const double thickness =
+              cm(room.wall_thickness ? *room.wall_thickness : cfg.wall_thickness);
+          const std::vector<Pt> outer_ring = offset_ring(inner_ring, thickness);
+          Extent ring_extent;
+          for (const auto& p : outer_ring) {
+            ring_extent.xmin = std::min(ring_extent.xmin, p.x * kCmToMm);
+            ring_extent.xmax = std::max(ring_extent.xmax, p.x * kCmToMm);
+            ring_extent.ymin = std::min(ring_extent.ymin, p.y * kCmToMm);
+            ring_extent.ymax = std::max(ring_extent.ymax, p.y * kCmToMm);
+          }
+
+          auto slab_ok = [&](const std::string& name) {
+            const auto it = layers.find(name);
+            if (it == layers.end()) return false;
+            const double drift = std::max(
+                {std::abs(it->second.xmin - ring_extent.xmin),
+                 std::abs(it->second.ymin - ring_extent.ymin),
+                 std::abs(it->second.xmax - ring_extent.xmax),
+                 std::abs(it->second.ymax - ring_extent.ymax)});
+            worst_drift = std::max(worst_drift, drift);
+            return drift <= kDxfTolMm;
+          };
+          const bool floor_ok = slab_ok("FLOOR");
+          const bool ceiling_ok = slab_ok("CEILING");
+
+          const auto fx = fixtures(room, inner_ring, cfg);
+          int fixture_layers = 0;
+          for (const auto& [name, extent] : layers)
+            if (name.rfind("FIXTURE_", 0) == 0 && extent.segments > 0) ++fixture_layers;
+
+          const bool ok = wall_ok == wall_total && floor_ok && ceiling_ok &&
+                          fixture_layers == static_cast<int>(fx.size());
           if (!ok) ++failures;
           verdict = std::string(ok ? "exact" : "DRIFT") +
-                    " segments=" + std::to_string(got.segments) + " drift=" + num(drift, 4);
+                    " walls=" + std::to_string(wall_ok) + "/" + std::to_string(wall_total) +
+                    " floor=" + (floor_ok ? "ok" : "MISS") +
+                    " ceiling=" + (ceiling_ok ? "ok" : "MISS") +
+                    " fixtures=" + std::to_string(fixture_layers) + "/" +
+                    std::to_string(fx.size()) + " drift=" + num(worst_drift, 4);
+        } else if (fmt == "glb") {
+          Handle(TDocStd_Document) doc;
+          XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc);
+          RWGltf_CafReader reader;
+          reader.SetDocument(doc);
+          if (!reader.Perform(TCollection_AsciiString(path.c_str()), Message_ProgressRange()))
+            throw std::runtime_error("GLB read failed: " + path);
+
+          TDF_LabelSequence roots;
+          XCAFDoc_DocumentTool::ShapeTool(doc->Main())->GetFreeShapes(roots);
+
+          std::vector<Pt> inner_ring;
+          for (const auto& p : room.outline) inner_ring.push_back({p.x, p.y});
+          const auto fx = fixtures(room, inner_ring, cfg);
+          const int wall_total = static_cast<int>(room.outline.size());
+          const int expected_count = 2 + wall_total + static_cast<int>(fx.size());
+
+          double want_vol = solid_stats(floor_body(room, cfg)).volume_m3 +
+                            solid_stats(ceiling_body(room, cfg)).volume_m3;
+          for (int e = 0; e < wall_total; ++e)
+            want_vol += solid_stats(wall_body(room, cfg, e).shape).volume_m3;
+          for (const auto& f : fx) want_vol += solid_stats(f.solid).volume_m3;
+
+          double got_vol = 0.0;
+          for (int i = 1; i <= roots.Length(); ++i)
+            got_vol += shape_mesh_volume_m3(XCAFDoc_ShapeTool::GetShape(roots.Value(i)));
+
+          const bool count_ok = roots.Length() == expected_count;
+          const double pct = want_vol > 0 ? std::abs(got_vol - want_vol) / want_vol * 100.0 : 0.0;
+          const bool vol_ok = pct <= kStlMaxErrorPct;
+          const bool ok = count_ok && vol_ok;
+          if (!ok) ++failures;
+          verdict = std::string(ok ? "ok" : (count_ok ? "COARSE" : "MISSING")) +
+                    " bodies=" + std::to_string(roots.Length()) + "/" +
+                    std::to_string(expected_count) + " vol=" + num(got_vol) + "/" +
+                    num(want_vol) + " error=" + num(pct, 6) + "%";
         } else {
           const double got = mesh_volume_m3(RWStl::ReadFile(path.c_str()));
           const double pct = std::abs(got - src.volume_m3) / src.volume_m3 * 100.0;

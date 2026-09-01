@@ -39,6 +39,7 @@ set(SNAPIR_SOURCES
   ${CORE}/src/tessellate.cpp
   ${CORE}/src/designx.cpp
   ${CORE}/src/store.cpp
+  ${CORE}/src/archive.cpp
   ${CORE}/src/service.cpp
 )
 
@@ -48,6 +49,7 @@ set(SHELL_SOURCES
   Sources/SnapirViewController.mm
   Sources/NativeService.mm
   Sources/FolderImport.mm
+  Sources/SdxpImport.mm
   Sources/WebBridge.mm
 )
 
@@ -138,8 +140,8 @@ set_target_properties(Snapir PROPERTIES
   MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
   MACOSX_BUNDLE_BUNDLE_NAME "Snapir"
   MACOSX_BUNDLE_GUI_IDENTIFIER "com.snapirdesign.designx"
-  MACOSX_BUNDLE_BUNDLE_VERSION "1.2.4"
-  MACOSX_BUNDLE_SHORT_VERSION_STRING "1.2.4"
+  MACOSX_BUNDLE_BUNDLE_VERSION "1.3.0"
+  MACOSX_BUNDLE_SHORT_VERSION_STRING "1.3.0"
 
   # iPad first: this is a survey tool, not a phone tool. 1,2 is iPhone+iPad,
   # and all four orientations rather than the phone build's portrait lock.

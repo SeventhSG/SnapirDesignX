@@ -1,10 +1,143 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, panoramaUrl, type BuildResult, type Project, type Room,
-         type Status } from "./api";
+import { api, panoramaUrl, type BuildResult, type Connection, type Project,
+         type Room, type Status } from "./api";
 import { t, type Key, type Lang } from "./i18n";
 import Sketch, { type EditMode } from "./Sketch";
-import Viewport, { ROLE_COLOR } from "./Viewport";
+import Viewport, { ROLE_COLOR, type DoorLink, type GhostRoom } from "./Viewport";
 import { solveRoom, type Pose } from "./panorama";
+
+/** A room's own floor outline, resolved from point names to coordinates. */
+function outlinePoints(r: Room): [number, number][] {
+  const named = new Map(r.points.map((p) => [p.name, p]));
+  return r.outline
+    .map((n) => named.get(n))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .map((p) => [p.x, p.y] as [number, number]);
+}
+
+function centroid(pts: [number, number][]): [number, number] {
+  let sx = 0, sy = 0;
+  for (const [x, y] of pts) { sx += x; sy += y; }
+  return pts.length ? [sx / pts.length, sy / pts.length] : [0, 0];
+}
+
+/** Ray-cast point-in-polygon, same test the viewport uses for walking
+ *  collision - exact for a concave outline (an L, a U), unlike a straight
+ *  line to the centroid, which such a shape can put on the wrong side of a
+ *  wall entirely. */
+function pointInPolygon(poly: [number, number][], x: number, y: number): boolean {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+
+/** A door's midpoint and the direction pointing into its own room, survey cm. */
+function doorFrame(r: Room, openingIndex: number) {
+  const o = r.openings[openingIndex];
+  const mid: [number, number] = [(o.left[0] + o.right[0]) / 2, (o.left[1] + o.right[1]) / 2];
+  const dx = o.right[0] - o.left[0], dy = o.right[1] - o.left[1];
+  const len = Math.hypot(dx, dy) || 1;
+  let nx = -dy / len, ny = dx / len;
+  // Either perpendicular could be "inward" - a short step down one either
+  // lands inside the room's own outline or it doesn't, which holds for any
+  // shape, unlike guessing from the centroid.
+  const outline = outlinePoints(r);
+  if (outline.length > 2) {
+    const probe: [number, number] = [mid[0] + nx * 30, mid[1] + ny * 30];
+    if (!pointInPolygon(outline, probe[0], probe[1])) { nx = -nx; ny = -ny; }
+  } else {
+    const [cx, cy] = centroid(outline);
+    if (nx * (cx - mid[0]) + ny * (cy - mid[1]) < 0) { nx = -nx; ny = -ny; }
+  }
+  return { mid, dir: [dx / len, dy / len] as [number, number], normal: [nx, ny] as [number, number] };
+}
+
+/** Room B's placement in room A's local frame that lines their two doorways
+ *  up, facing each other - the default a new connection starts from. */
+function alignDoors(roomA: Room, openingA: number, roomB: Room, openingB: number) {
+  const a = doorFrame(roomA, openingA);
+  const b = doorFrame(roomB, openingB);
+  // Aligning the doors' own left/right tangent only makes them coincide - it
+  // says nothing about which side either room's interior ends up on, and
+  // that side is an arbitrary survey convention independent per room, so
+  // that alone lands room B inside room A as often as not. What has to line
+  // up is the normals: B's own inward direction, rotated, has to point the
+  // opposite way from A's, so the two interiors open away from each other.
+  const angleA = Math.atan2(a.normal[1], a.normal[0]);
+  const angleB = Math.atan2(b.normal[1], b.normal[0]);
+  const rotation = angleA + Math.PI - angleB;
+  const cos = Math.cos(rotation), sin = Math.sin(rotation);
+  const rbx = b.mid[0] * cos - b.mid[1] * sin;
+  const rby = b.mid[0] * sin + b.mid[1] * cos;
+  return { dx: a.mid[0] - rbx, dy: a.mid[1] - rby, rotationDeg: (rotation * 180) / Math.PI };
+}
+
+/** The same rigid placement, seen from the other room: if this places B in
+ *  A's frame, the inverse places A in B's frame. */
+function invertTransform(t: { dx: number; dy: number; rotationDeg: number }) {
+  const rad = (t.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  return {
+    dx: -(t.dx * cos + t.dy * sin),
+    dy: -(-t.dx * sin + t.dy * cos),
+    rotationDeg: -t.rotationDeg,
+  };
+}
+
+/** A point in room B's own frame, placed into room A's frame by the same
+ *  rigid transform the ghost mesh itself is built with (rotate, then
+ *  translate) - so a door marker computed here lands exactly on the ghost. */
+function applyTransform(
+  p: [number, number], t: { dx: number; dy: number; rotationDeg: number },
+): [number, number] {
+  const rad = (t.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  return [p[0] * cos - p[1] * sin + t.dx, p[0] * sin + p[1] * cos + t.dy];
+}
+
+/** Where room B sits before either of you has picked its door: parked just
+ *  outside door A, facing square on, so its own doors are in view and
+ *  clickable. Picking a door there replaces this with alignDoors' exact fit. */
+function parkBeside(roomA: Room, openingA: number, roomB: Room) {
+  const a = doorFrame(roomA, openingA);
+  const bOutline = outlinePoints(roomB);
+  const [cx, cy] = centroid(bOutline);
+  // Room B sits at rotation 0, whichever way that turns out to face, so the
+  // clearance has to hold for every point in its outline, not just its
+  // centroid - its own bounding radius past the door, plus a clear margin.
+  let radius = 0;
+  for (const [x, y] of bOutline) radius = Math.max(radius, Math.hypot(x - cx, y - cy));
+  const standoff = radius + 300;
+  // a.normal points into room A, not out of it - away from A is the other way.
+  const targetX = a.mid[0] - a.normal[0] * standoff;
+  const targetY = a.mid[1] - a.normal[1] * standoff;
+  return { dx: targetX - cx, dy: targetY - cy, rotationDeg: 0 };
+}
+
+/** Carry a walking heading across a connection's rigid transform, so walking
+ *  "forward" through a door keeps feeling forward on the far side instead of
+ *  keeping the same raw world angle - the two rooms share no coordinate
+ *  frame, so that number means nothing between them on its own. */
+function rotateYaw(yaw: number, deltaDeg: number): number {
+  // Inverse of toWorld's fixed y-to-z flip (see Viewport's own comment by
+  // the same name): recover the survey-space direction this yaw represents.
+  const nx = -Math.sin(yaw), ny = Math.cos(yaw);
+  const rad = (deltaDeg * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const rx = nx * cos - ny * sin, ry = nx * sin + ny * cos;
+  return Math.atan2(-rx, ry);
+}
+
+/** Where to stand just inside the target room, survey centimetres. */
+function entryPoint(target: Room, openingIndex: number) {
+  const { mid, normal } = doorFrame(target, openingIndex);
+  const STAND_OFF = 90;  // cm past the threshold, clear of the door trigger
+  return { x: mid[0] + normal[0] * STAND_OFF, y: mid[1] + normal[1] * STAND_OFF };
+}
 
 const bridge = (window as any).snapir;
 
@@ -38,15 +171,18 @@ const ROLES: { role: string; key: Key }[] = [
   { role: "control", key: "rControl" },
 ];
 
-// Three formats, for three different jobs. STEP is the body to work from and
+// Four formats, for four different jobs. STEP is the body to work from and
 // comes back through the kernel exactly. STL is triangles, for opening the
-// room in something that will not read a STEP file. DXF is a plan: a
-// horizontal section through the same body, for AutoCAD or anything else
-// that only wants a 2D drawing.
+// room in something that will not read a STEP file. DXF is a plan with every
+// element - floor, ceiling, each wall, each fixture - on its own layer, for
+// AutoCAD or anything else that only wants a 2D drawing. GLB carries that
+// same split as real solid meshes instead of 2D lines, for SketchUp and
+// anything else with no STEP/IGES importer.
 const EXPORT_FORMATS = [
   { id: "step", label: "STEP", suffix: ".step" },
   { id: "stl", label: "STL", suffix: ".stl" },
   { id: "dxf", label: "DXF", suffix: ".dxf" },
+  { id: "glb", label: "GLB", suffix: ".glb" },
 ];
 const STEP_SCHEMAS = ["AP203", "AP214", "AP242"];
 
@@ -78,6 +214,7 @@ export default function App() {
   const [switcher, setSwitcher] = useState(false);  // sibling rooms popover
   const [result, setResult] = useState<BuildResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
 
   const [face, setFace] = useState<number | null>(null);
   const [tool, setTool] = useState<"face" | "sketch">("face");
@@ -89,6 +226,19 @@ export default function App() {
   const [pointName, setPointName] = useState<string | null>(null);
   const [look, setLook] = useState<"orbit" | "inside">("orbit");
   const [ghost, setGhost] = useState(false);
+  /* Doors hooked to other rooms, for the whole project (a connection can
+     point at any room, not just the current one's flat-mates), whether the
+     walkthrough is allowed to use them right now, where crossing one should
+     stand you, and the door being wired up in the connect tool. */
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [connectedMode, setConnectedMode] = useState(false);
+  const [enterAt, setEnterAt] = useState<{ x: number; y: number; yaw: number } | null>(null);
+  const [doorsOpen, setDoorsOpen] = useState(false);
+  const [connecting, setConnecting] = useState<number | null>(null);
+  /* Room B, once picked - the door itself is picked in the viewport, not from
+     a list, so nothing here names it until a glowing door is clicked there. */
+  const [connectTo, setConnectTo] = useState<string | null>(null);
+  const [pendingOpeningB, setPendingOpeningB] = useState<number | null>(null);
   /* The panoramas whose heading was recovered, where the eye is standing now,
      and whether the photograph is up instead of the body. */
   const [poses, setPoses] = useState<Pose[]>([]);
@@ -210,6 +360,7 @@ export default function App() {
       setRooms(data.rooms);
       setFlat(data.rooms[0]?.flat ?? "");
       setScreen("rooms");
+      api.connections(id).then((c) => setConnections(c.connections)).catch(() => {});
     } catch (e) { say((e as Error).message, true); }
     finally { setBusy(false); }
   };
@@ -220,6 +371,27 @@ export default function App() {
     try {
       const { id } = await api.createProject(folder);
       setProjects(await api.projects());
+      await openProject(id);
+    } catch (e) { say((e as Error).message, true); }
+  };
+
+  /* A portable .sdxp: survey folder plus every override and connection,
+   * zipped so the project opens on another device with nothing else needed. */
+  const exportProject = async (p: Pick<Project, "id" | "name">) => {
+    try {
+      const r = await api.exportSdxp(p.id);
+      say(`${T("exportedProjectTo")} · ${(r.bytes / 1024).toFixed(0)} KB`);
+      bridge?.reveal(r.path);
+    } catch (e) { say((e as Error).message, true); }
+  };
+
+  const importProject = async () => {
+    const picked = await bridge?.pickSdxp();
+    if (!picked) return;
+    try {
+      const { id } = await api.importSdxp(picked);
+      setProjects(await api.projects());
+      say(T("importedProject"));
       await openProject(id);
     } catch (e) { say((e as Error).message, true); }
   };
@@ -253,6 +425,22 @@ export default function App() {
     finally { setBusy(false); }
   };
 
+  /** Builds every buildable room in this flat, one at a time, so crossing a
+   *  connected door later never sits on a first build - a room already known
+   *  to need the operator's input is skipped, since building it would just
+   *  fail. */
+  const loadAllRooms = async () => {
+    if (!project || !room) return;
+    setLoadingAll(true);
+    let failed = 0;
+    for (const r of rooms.filter((x) => x.flat === room.flat && x.status !== "needs-you")) {
+      try { await api.build(project.id, r.name); }
+      catch { failed++; }
+    }
+    setLoadingAll(false);
+    say(failed ? `${failed} ${T("roomsFailedToLoad")}` : T("allRoomsLoaded"));
+  };
+
   const patch = async (body: Record<string, unknown>, keepRing = false) => {
     if (!project || !room) return;
     try {
@@ -267,6 +455,186 @@ export default function App() {
 
   const setRole = (name: string, role: string) =>
     patch({ roleOverrides: { [name]: role } }, true);
+
+  /* ---------------- doors hooked to other rooms ---------------- */
+
+  const linkDoor = async (openingA: number, roomBName: string, openingB: number) => {
+    if (!project || !room) return;
+    const roomB = rooms.find((r) => r.name === roomBName);
+    if (!roomB) return;
+    const t = alignDoors(room, openingA, roomB, openingB);
+    try {
+      const c = await api.createConnection(project.id, {
+        roomA: room.name, openingA, roomB: roomBName, openingB, ...t,
+      });
+      setConnections((cs) => [...cs, c]);
+      setConnecting(null);
+      setConnectTo(null);
+      setPendingOpeningB(null);
+    } catch (e) { say((e as Error).message, true); }
+  };
+
+  const cancelLink = () => {
+    setConnecting(null);
+    setConnectTo(null);
+    setPendingOpeningB(null);
+  };
+
+  const unlinkConnection = async (id: string) => {
+    if (!project) return;
+    try {
+      await api.deleteConnection(project.id, id);
+      setConnections((cs) => cs.filter((c) => c.id !== id));
+    } catch (e) { say((e as Error).message, true); }
+  };
+
+  const toggleConnection = async (c: Connection) => {
+    if (!project) return;
+    try {
+      const updated = await api.patchConnection(project.id, c.id, { enabled: !c.enabled });
+      setConnections((cs) => cs.map((x) => (x.id === c.id ? updated : x)));
+    } catch (e) { say((e as Error).message, true); }
+  };
+
+  /** Cross through a connected door: switch to the room on the other side and
+   *  stand just inside it, facing in. */
+  const crossInto = async (connectionId: string) => {
+    const c = connections.find((x) => x.id === connectionId);
+    if (!c || !c.enabled || !room) return;
+    const iAmA = room.name === c.roomA;
+    const targetName = iAmA ? c.roomB : c.roomA;
+    const targetOpening = iAmA ? c.openingB : c.openingA;
+    const target = rooms.find((r) => r.name === targetName);
+    if (!target || !target.openings[targetOpening]) return;
+
+    // Same room-open bookkeeping openRoom does, but the build is awaited
+    // here (openRoom fires it and moves on) - the eye must not land until
+    // the far room's geometry actually exists to stand in, and doing it this
+    // way means the ordinary "Building..." cover carries the wait, the same
+    // as opening any other room does.
+    // c.rotationDeg turns room B's frame into room A's; carrying a heading
+    // the other way needs the inverse.
+    const heading = rotateYaw(eye.yaw, iAmA ? -c.rotationDeg : c.rotationDeg);
+
+    setFlat(target.flat);
+    setRoom(target);
+    setRing(target.outline);
+    setFace(null);
+    setPointName(null);
+    setEnterAt(null);
+    await buildRoom(target);
+    setEnterAt({ ...entryPoint(target, targetOpening), yaw: heading });
+    setLook("inside");
+  };
+
+  /** This room's doors that lead somewhere, and a faded preview of what is
+   *  through each one - only while the walkthrough is allowed to use them. */
+  const doors = useMemo<DoorLink[]>(() => {
+    if (!room || !connectedMode) return [];
+    return connections
+      .filter((c) => c.enabled && (c.roomA === room.name || c.roomB === room.name))
+      .map((c) => {
+        const mine = c.roomA === room.name ? c.openingA : c.openingB;
+        const o = room.openings[mine];
+        return o ? { connectionId: c.id, left: o.left, right: o.right } : null;
+      })
+      .filter((d): d is DoorLink => !!d);
+  }, [room, connections, connectedMode]);
+
+  const ghostRooms = useMemo<GhostRoom[]>(() => {
+    if (!room || !connectedMode) return [];
+    return connections
+      .filter((c) => c.enabled && (c.roomA === room.name || c.roomB === room.name))
+      .map((c) => {
+        const iAmA = c.roomA === room.name;
+        const other = rooms.find((r) => r.name === (iAmA ? c.roomB : c.roomA));
+        if (!other) return null;
+        // dx/dy/rotationDeg place B in A's frame; from B looking at A it is
+        // the inverse of that rigid transform.
+        const t = iAmA ? c : invertTransform(c);
+        return {
+          connectionId: c.id, outline: outlinePoints(other),
+          floorZ: other.floorZ, ceilingHeight: other.ceilingHeight,
+          dx: t.dx, dy: t.dy, rotationDeg: t.rotationDeg,
+        };
+      })
+      .filter((g): g is GhostRoom => !!g);
+  }, [room, rooms, connections, connectedMode]);
+
+  /* ---------------- picking a door for a new connection, in the viewport
+     itself rather than from a list of look-alike widths ---------------- */
+
+  const pickRoomB = useMemo(
+    () => (connectTo ? rooms.find((r) => r.name === connectTo) ?? null : null),
+    [connectTo, rooms],
+  );
+
+  /* Parked beside room A until a door is picked, then the exact fit -
+     alignDoors is the same function an established connection was built
+     with, so the snap lands exactly where the connection will actually sit. */
+  const pickTransform = useMemo(() => {
+    if (!room || connecting == null || !pickRoomB) return null;
+    return pendingOpeningB != null
+      ? alignDoors(room, connecting, pickRoomB, pendingOpeningB)
+      : parkBeside(room, connecting, pickRoomB);
+  }, [room, connecting, pickRoomB, pendingOpeningB]);
+
+  const pickGhost = useMemo<GhostRoom | null>(() => {
+    if (!pickRoomB || !pickTransform) return null;
+    return {
+      connectionId: "pick", outline: outlinePoints(pickRoomB),
+      floorZ: pickRoomB.floorZ, ceilingHeight: pickRoomB.ceilingHeight,
+      ...pickTransform,
+    };
+  }, [pickRoomB, pickTransform]);
+
+  /* Room B's own doors, glowing where they actually stand next to room A -
+     the thing a cm width on a dropdown could never show. Once one is picked
+     these go quiet; the confirm bar takes over. */
+  const pickDoors = useMemo<DoorLink[]>(() => {
+    if (!pickRoomB || !pickTransform || pendingOpeningB != null) return [];
+    return pickRoomB.openings
+      .map((o, j) => o.kind === "door"
+        ? { connectionId: `pick:${j}`,
+            left: applyTransform(o.left, pickTransform),
+            right: applyTransform(o.right, pickTransform) }
+        : null)
+      .filter((d): d is DoorLink => !!d);
+  }, [pickRoomB, pickTransform, pendingOpeningB]);
+
+  const pickOpeningB = (id: string) => {
+    const j = Number(id.slice("pick:".length));
+    if (Number.isFinite(j)) setPendingOpeningB(j);
+  };
+
+  /* This room's own doors, glowing from the moment the Doors popover opens -
+     the "click one and confirm" step the cm list used to stand in for.
+     Narrows to just the one already picked once a link is in progress, so
+     the confirmation stays on screen through the room-picking step too. */
+  const myDoors = useMemo<DoorLink[]>(() => {
+    if (!room || !doorsOpen) return [];
+    if (connecting == null) {
+      return room.openings
+        .map((o, i) => (o.kind === "door" && !connections.some((c) =>
+            (c.roomA === room.name && c.openingA === i) ||
+            (c.roomB === room.name && c.openingB === i)))
+          ? { connectionId: `a:${i}`, left: o.left, right: o.right } : null)
+        .filter((d): d is DoorLink => !!d);
+    }
+    if (connectTo) return [];
+    const o = room.openings[connecting];
+    return o ? [{ connectionId: `a:${connecting}`, left: o.left, right: o.right }] : [];
+  }, [room, doorsOpen, connecting, connectTo, connections]);
+
+  const pickOpeningA = (id: string) => {
+    const i = Number(id.slice("a:".length));
+    if (Number.isFinite(i)) setConnecting(i);
+  };
+
+  const viewportDoors = pickDoors.length ? pickDoors : myDoors.length ? myDoors : doors;
+  const viewportGhosts = pickGhost ? [...ghostRooms, pickGhost] : ghostRooms;
+  const viewportOnDoor = pickDoors.length ? pickOpeningB
+    : myDoors.length && connecting == null ? pickOpeningA : crossInto;
 
   const doExport = async () => {
     if (!project || !room) return;
@@ -576,6 +944,7 @@ export default function App() {
               <h2>{T("navProjects")}</h2>
               <span className="num">{projects.length}</span>
               <div className="sp">
+                <button className="btn q sm" onClick={importProject}>{T("importProject")}</button>
                 <button className="btn" onClick={newProject}>{T("newProject")}</button>
               </div>
             </div>
@@ -597,6 +966,10 @@ export default function App() {
                       {p.missing
                         ? <span className="tag t-warn"><i />{T("missing")}</span>
                         : <div><span className="num">{p.rooms}</span><span>{T("rooms")}</span></div>}
+                      <button className="btn q sm"
+                              onClick={(e) => { e.stopPropagation(); void exportProject(p); }}>
+                        {T("exportProject")}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -687,6 +1060,10 @@ export default function App() {
                     : null}
                   panoOpen={panoOpen}
                   onLook={setEye}
+                  doors={viewportDoors}
+                  ghostRooms={viewportGhosts}
+                  onCrossDoor={viewportOnDoor}
+                  enterAt={enterAt}
                 />
               )}
               {inSketch && view === "2d" && (
@@ -722,6 +1099,26 @@ export default function App() {
                 {panoOpen && panoWarn && (
                   <div className="panowarn" role="status">{T("panoUnaligned")}</div>
                 )}
+                {pickRoomB && (
+                  <div className="linkbar" role="group">
+                    {pendingOpeningB != null ? (
+                      <>
+                        <span>{T("connectTo")} <b>{pickRoomB.label}</b>?</span>
+                        <button className="btn q sm" onClick={() => setPendingOpeningB(null)}>
+                          {T("cancel")}</button>
+                        <button className="btn sm"
+                                onClick={() => connecting != null &&
+                                  void linkDoor(connecting, pickRoomB.name, pendingOpeningB)}>
+                          {T("confirm")}</button>
+                      </>
+                    ) : (
+                      <>
+                        <span>{T("pickDoorHint")} <b>{pickRoomB.label}</b></span>
+                        <button className="btn q sm" onClick={cancelLink}>{T("cancel")}</button>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div className="tools">
                   <div className="seg quiet">
                     <button aria-pressed={tool === "face"}
@@ -750,6 +1147,19 @@ export default function App() {
                       <div className="seg quiet">
                         <button aria-pressed={ghost}
                                 onClick={() => setGhost(!ghost)}>{T("vGhost")}</button>
+                      </div>
+                      <div className="seg quiet">
+                        <button disabled={loadingAll} onClick={() => void loadAllRooms()}>
+                          {loadingAll ? T("loadingAll") : T("loadAll")}</button>
+                      </div>
+                      <div className="seg quiet">
+                        <button aria-pressed={connectedMode}
+                                title={T("connectedDoorsHelp")}
+                                onClick={() => setConnectedMode(!connectedMode)}>
+                          {T("connectedDoors")}</button>
+                        <button aria-pressed={doorsOpen}
+                                onClick={() => setDoorsOpen(!doorsOpen)}>
+                          {T("doors")}</button>
                       </div>
                     </>
                   )}
@@ -785,6 +1195,69 @@ export default function App() {
                     {T("exportRoom")}</button>
                 </div>
               </div>
+
+              {doorsOpen && room && (
+                <>
+                  {/* Covers the whole window to close on an outside click, same
+                      as any other popover here - except while a door is glowing
+                      in the viewport underneath it, where the click has to reach
+                      the canvas instead of being caught by this. */}
+                  <div className="swback"
+                       style={myDoors.length ? { pointerEvents: "none" } : undefined}
+                       onClick={() => { setDoorsOpen(false); cancelLink(); }} />
+                  <div className="swpop doorspop" role="dialog" aria-label={T("doors")}>
+                    <h4>{T("doors")}</h4>
+                    <div className="swlist">
+                      {room.openings.filter((o) => o.kind === "door").length === 0 && (
+                        <p className="hint">{T("noDoors")}</p>
+                      )}
+                      {room.openings.map((o, i) => {
+                        if (o.kind !== "door") return null;
+                        const link = connections.find((c) =>
+                          (c.roomA === room.name && c.openingA === i) ||
+                          (c.roomB === room.name && c.openingB === i));
+                        const otherName = link
+                          ? (link.roomA === room.name ? link.roomB : link.roomA) : null;
+                        const other = otherName ? rooms.find((r) => r.name === otherName) : null;
+                        return (
+                          <div key={i} className="swrow" style={{ display: "block" }}>
+                            <b>{T("doorWidth")} {o.width.toFixed(0)} cm</b>
+                            {link ? (
+                              <div className="rail" role="group">
+                                <span>{other?.label ?? otherName}</span>
+                                <Switch on={link.enabled}
+                                        onChange={() => void toggleConnection(link)} />
+                                <button className="btn q sm"
+                                        onClick={() => void unlinkConnection(link.id)}>
+                                  {T("unlink")}</button>
+                              </div>
+                            ) : connecting === i ? (
+                              <div className="rail" role="group">
+                                <select value=""
+                                        onChange={(e) => {
+                                          if (!e.target.value) return;
+                                          setConnectTo(e.target.value);
+                                          setDoorsOpen(false);
+                                        }}>
+                                  <option value="">{T("pickRoom")}</option>
+                                  {rooms.filter((r) => r.name !== room.name && r.flat === room.flat).map((r) => (
+                                    <option key={r.name} value={r.name}>{r.label}</option>
+                                  ))}
+                                </select>
+                                <button className="btn q sm" onClick={cancelLink}>
+                                  {T("cancel")}</button>
+                              </div>
+                            ) : (
+                              <button className="btn q sm" onClick={() => setConnecting(i)}>
+                                {T("linkTo")}</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {inSketch && edit === "outline" && (
                 <div className="sketchbar">
@@ -981,6 +1454,11 @@ export default function App() {
 
               <Row title={T("jobThickness")} help={T("jobThicknessHelp")}>
                 <Stepper value={project.thickness} onChange={setJobThickness} />
+              </Row>
+
+              <Row title={T("exportProject")} help={T("exportProjectHelp")}>
+                <button className="btn q sm" onClick={() => void exportProject(project)}>
+                  {T("exportProject")}</button>
               </Row>
 
               <div className="danger">

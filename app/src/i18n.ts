@@ -15,6 +15,8 @@ const en = {
   noProjectsHelp: "Point Snapir at a folder of Leica iCON room exports to begin.",
   rooms: "rooms", ready: "ready", needsYou: "needs you", built: "built",
   missing: "Folder not found", remove: "Remove",
+  importProject: "Import .sdxp", exportProject: "Export .sdxp",
+  exportedProjectTo: "Exported to", importedProject: "Project imported",
 
   room: "Room", status: "Status", area: "Area", ceiling: "Ceiling",
   openings: "Openings", fixtures: "Fixtures", corners: "Corners",
@@ -31,7 +33,7 @@ const en = {
   tFace: "Face", tSketch: "Sketch", tOpening: "Opening", tFixture: "Fixture",
   buildRoom: "Build", exportStep: "Export STEP", exportRoom: "Export",
   forDesignX: "For Design X",
-  formatHelp: "STEP is the exact body to work from. STL is triangles, for viewing only. DXF is a plan section, for AutoCAD.",
+  formatHelp: "STEP is the exact body to work from. STL is triangles, for viewing only. DXF is a plan, one layer per element, for AutoCAD. GLB is separate solid bodies, for SketchUp.",
   schemaHelp: "STEP schema. AP242 is the current one and what SolidWorks and Design X prefer.",
 
   sketchTitle: "Edit outline",
@@ -108,6 +110,8 @@ const en = {
   showInExplorer: "Show in Explorer",
   jobThickness: "Wall thickness for this job",
   jobThicknessHelp: "Overrides the global default for every room in this project.",
+  exportProjectHelp: "Survey folder, overrides and connected doors, zipped into one " +
+    ".sdxp that opens on another install of Snapir with nothing else needed.",
   removeProject: "Remove project",
   removeProjectHelp: "Takes it out of Snapir. Every CSV, DXF and photo stays exactly where it is on disk.",
   removeSure: "Remove it from Snapir?",
@@ -118,6 +122,14 @@ const en = {
   flats: "Flats", flat: "Flat", allRooms: "All rooms",
   openFlat: "Open", inThisFlat: "in this flat",
   otherRooms: "Other rooms", switchRoom: "Switch room",
+  connectedDoors: "Connected doors",
+  connectedDoorsHelp: "Walk or click through a linked door to cross into the room beyond it.",
+  loadAll: "Load all", loadingAll: "Loading all…",
+  allRoomsLoaded: "Every room in this flat is loaded", roomsFailedToLoad: "room(s) failed to load",
+  doors: "Doors", noDoors: "No doors in this room.",
+  doorWidth: "Door ·", unlink: "Unlink", pickRoom: "Pick a room…",
+  linkTo: "Link to…", pickDoorHint: "Click a glowing door on", connectTo: "Connect to",
+  confirm: "Confirm",
   noPanorama: "No panorama", panoramaOf: "Panorama",
   flatsHelp: "Every flat in this survey. Open one to see its rooms.",
 };
@@ -135,6 +147,8 @@ const tr: Record<keyof typeof en, string> = {
   noProjectsHelp: "Başlamak için Leica iCON oda dosyalarının olduğu bir klasörü seç.",
   rooms: "oda", ready: "hazır", needsYou: "bilgi gerekli", built: "oluşturuldu",
   missing: "Klasör bulunamadı", remove: "Kaldır",
+  importProject: ".sdxp içe aktar", exportProject: ".sdxp dışa aktar",
+  exportedProjectTo: "Şuraya aktarıldı", importedProject: "Proje içe aktarıldı",
 
   room: "Oda", status: "Durum", area: "Alan", ceiling: "Tavan",
   openings: "Boşluk", fixtures: "Tesisat", corners: "Köşe",
@@ -151,7 +165,7 @@ const tr: Record<keyof typeof en, string> = {
   tFace: "Yüzey", tSketch: "Çizim", tOpening: "Boşluk", tFixture: "Tesisat",
   buildRoom: "Oluştur", exportStep: "STEP aktar", exportRoom: "Dışa aktar",
   forDesignX: "Design X için",
-  formatHelp: "STEP üzerinde çalışılacak tam gövdedir. STL üçgenlerdir, yalnızca görüntülemek içindir. DXF, AutoCAD için bir kesit plandır.",
+  formatHelp: "STEP üzerinde çalışılacak tam gövdedir. STL üçgenlerdir, yalnızca görüntülemek içindir. DXF, her öğenin kendi katmanında olduğu, AutoCAD için bir plandır. GLB, SketchUp için ayrı katı gövdelerdir.",
   schemaHelp: "STEP şeması. AP242 güncel olanıdır; SolidWorks ve Design X bunu tercih eder.",
 
   sketchTitle: "Oda hattını düzenle",
@@ -229,6 +243,8 @@ const tr: Record<keyof typeof en, string> = {
   showInExplorer: "Klasörü göster",
   jobThickness: "Bu işin duvar kalınlığı",
   jobThicknessHelp: "Bu projedeki her oda için genel varsayılanın yerine geçer.",
+  exportProjectHelp: "Anket klasörü, geçersiz kılmalar ve bağlı kapılar, Snapir'in başka " +
+    "bir kurulumunda başka bir şey gerekmeden açılan tek bir .sdxp dosyasına sıkıştırılır.",
   removeProject: "Projeyi kaldır",
   removeProjectHelp: "Sadece Snapir'den çıkarır. Diskteki bütün CSV, DXF ve fotoğraflar olduğu yerde kalır.",
   removeSure: "Snapir'den kaldırılsın mı?",
@@ -239,6 +255,14 @@ const tr: Record<keyof typeof en, string> = {
   flats: "Daireler", flat: "Daire", allRooms: "Tüm odalar",
   openFlat: "Aç", inThisFlat: "bu dairede",
   otherRooms: "Diğer odalar", switchRoom: "Odaya geç",
+  connectedDoors: "Bağlı kapılar",
+  connectedDoorsHelp: "Bağlı bir kapıdan yürüyerek veya tıklayarak diğer odaya geçin.",
+  loadAll: "Hepsini yükle", loadingAll: "Hepsi yükleniyor…",
+  allRoomsLoaded: "Bu dairedeki her oda yüklendi", roomsFailedToLoad: "oda yüklenemedi",
+  doors: "Kapılar", noDoors: "Bu odada kapı yok.",
+  doorWidth: "Kapı ·", unlink: "Bağlantıyı kaldır", pickRoom: "Bir oda seçin…",
+  linkTo: "Bağla…", pickDoorHint: "Işıklı bir kapıya tıkla:", connectTo: "Bağlansın mı:",
+  confirm: "Onayla",
   noPanorama: "Panorama yok", panoramaOf: "Panorama",
   flatsHelp: "Bu ölçümdeki tüm daireler. Odalarını görmek için birini aç.",
 };

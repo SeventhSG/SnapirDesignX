@@ -65,6 +65,13 @@ std::string app_dir() {
   return d.u8string();
 }
 
+std::string new_id() {
+  static std::mt19937_64 rng{std::random_device{}()};
+  std::ostringstream id;
+  for (int i = 0; i < 12; ++i) id << "0123456789abcdef"[rng() & 0xF];
+  return id.str();
+}
+
 std::string now_iso8601() {
   const auto now = std::chrono::system_clock::now();
   const std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -118,6 +125,34 @@ RoomOverride override_from_json(const Json& j) {
   return ov;
 }
 
+Json to_json(const Connection& c) {
+  Json j = Json::object();
+  j["id"] = c.id;
+  j["roomA"] = c.room_a;
+  j["openingA"] = c.opening_a;
+  j["roomB"] = c.room_b;
+  j["openingB"] = c.opening_b;
+  j["dx"] = c.dx;
+  j["dy"] = c.dy;
+  j["rotationDeg"] = c.rotation_deg;
+  j["enabled"] = c.enabled;
+  return j;
+}
+
+Connection connection_from_json(const Json& j) {
+  Connection c;
+  c.id = get_or(j, "id", std::string{});
+  c.room_a = get_or(j, "roomA", std::string{});
+  c.opening_a = get_or(j, "openingA", -1);
+  c.room_b = get_or(j, "roomB", std::string{});
+  c.opening_b = get_or(j, "openingB", -1);
+  c.dx = get_or(j, "dx", 0.0);
+  c.dy = get_or(j, "dy", 0.0);
+  c.rotation_deg = get_or(j, "rotationDeg", 0.0);
+  c.enabled = get_or(j, "enabled", true);
+  return c;
+}
+
 Store::Store(const std::string& path) {
   path_ = path.empty() ? (fs::u8path(app_dir()) / "projects.json").u8string() : path;
   load();
@@ -153,6 +188,10 @@ void Store::load() {
       for (const auto& ov : p_json["overrides"].items())
         rec.overrides[ov.key()] = override_from_json(ov.value());
 
+    if (p_json.contains("connections"))
+      for (const auto& c : p_json["connections"])
+        rec.connections.push_back(connection_from_json(c));
+
     projects_[rec.id] = std::move(rec);
   }
 }
@@ -172,6 +211,8 @@ void Store::save() const {
     j["thickness"] = p.thickness;
     j["overrides"] = Json::object();
     for (const auto& ov : p.overrides) j["overrides"][ov.first] = to_json(ov.second);
+    j["connections"] = Json::array();
+    for (const auto& c : p.connections) j["connections"].push_back(to_json(c));
     payload["projects"][kv.first] = j;
   }
 
@@ -196,19 +237,26 @@ ProjectRecord& Store::create(const std::string& name, const std::string& folder)
   }
   if (!any) throw std::invalid_argument("No Leica room CSVs found in that folder.");
 
-  static std::mt19937_64 rng{std::random_device{}()};
-  std::ostringstream id;
-  for (int i = 0; i < 12; ++i) id << "0123456789abcdef"[rng() & 0xF];
-
   ProjectRecord rec;
-  rec.id = id.str();
+  rec.id = new_id();
   rec.name = name.empty() ? f.filename().u8string() : name;
   rec.folder = f.u8string();
   rec.created_at = now_iso8601();
   rec.opened_at = rec.created_at;
+  const std::string id = rec.id;
   projects_[rec.id] = std::move(rec);
   save();
-  return projects_[id.str()];
+  return projects_[id];
+}
+
+ProjectRecord& Store::adopt(ProjectRecord rec) {
+  rec.id = new_id();
+  rec.created_at = rec.created_at.empty() ? now_iso8601() : rec.created_at;
+  rec.opened_at = now_iso8601();
+  const std::string id = rec.id;
+  projects_[rec.id] = std::move(rec);
+  save();
+  return projects_[id];
 }
 
 ProjectRecord& Store::get(const std::string& pid) {

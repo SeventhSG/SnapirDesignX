@@ -17,6 +17,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.IOException;
 
 /**
  * The whole Android shell.
@@ -30,6 +31,7 @@ public class MainActivity extends Activity {
 
     private static final int REQ_LEGACY_STORAGE = 41;
     private static final int REQ_PICK_TREE = 42;
+    private static final int REQ_PICK_SDXP = 43;
 
     private WebView web;
     private TextView status;
@@ -154,6 +156,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_SDXP) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                deliverSdxp(null);
+            } else {
+                deliverSdxp(copySdxpToTemp(data.getData()));
+            }
+            return;
+        }
         if (requestCode != REQ_PICK_TREE) return;
 
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
@@ -175,6 +185,53 @@ public class MainActivity extends Activity {
         final String js = path == null
                 ? "window.__snapirFolderChosen && window.__snapirFolderChosen(null)"
                 : "window.__snapirFolderChosen && window.__snapirFolderChosen("
+                        + jsString(path) + ")";
+        runOnUiThread(() -> web.evaluateJavascript(js, null));
+    }
+
+    /**
+     * Lets the operator pick a .sdxp from anywhere - another app, a cloud
+     * drive, a shared folder - the same way the desktop's open-file dialog
+     * does. Unlike a survey folder there is no directory to browse into, so
+     * this is the one picker with no FolderPicker-style fallback.
+     */
+    void pickSdxp() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        try {
+            startActivityForResult(i, REQ_PICK_SDXP);
+        } catch (Exception e) {
+            deliverSdxp(null);
+        }
+    }
+
+    /**
+     * The picker returns a {@code content://} URI, which the geometry core
+     * cannot open, so the bytes are copied into a real file the core can read
+     * - the manifest inside decides whether it was actually a .sdxp.
+     */
+    private String copySdxpToTemp(Uri uri) {
+        File dir = new File(getFilesDir(), "tmp");
+        if (!dir.isDirectory() && !dir.mkdirs()) return null;
+        File dest = new File(dir, "import-" + System.currentTimeMillis() + ".sdxp");
+        try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+             java.io.OutputStream out = new java.io.FileOutputStream(dest)) {
+            if (in == null) return null;
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return dest.getAbsolutePath();
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** Hands a chosen .sdxp's real path back to the promise the page is waiting on. */
+    void deliverSdxp(String path) {
+        final String js = path == null
+                ? "window.__snapirSdxpChosen && window.__snapirSdxpChosen(null)"
+                : "window.__snapirSdxpChosen && window.__snapirSdxpChosen("
                         + jsString(path) + ")";
         runOnUiThread(() -> web.evaluateJavascript(js, null));
     }

@@ -19,6 +19,7 @@ add_library(snapir SHARED
   ${CORE}/src/tessellate.cpp
   ${CORE}/src/designx.cpp
   ${CORE}/src/store.cpp
+  ${CORE}/src/archive.cpp
   ${CORE}/src/service.cpp
   jni_bridge.cpp
 )
@@ -35,7 +36,8 @@ target_compile_definitions(snapir PRIVATE SNAPIR_WITH_OCCT=1)
 # OCCT is cross-compiled static, so the app ships one .so rather than forty-odd.
 # The link order matters for a static build: dependents before dependencies.
 set(OCCT_LIBS
-  TKDESTEP TKDEIGES TKDESTL TKDE TKXCAF TKVCAF TKCAF TKLCAF TKCDF
+  TKDESTEP TKDEIGES TKDESTL TKDEGLTF TKDE TKXCAF TKVCAF TKCAF TKLCAF TKCDF
+  TKRWMesh TKV3d TKService
   TKOffset TKFillet TKBool TKBO TKPrim TKShHealing TKMesh
   TKTopAlgo TKGeomAlgo TKBRep TKGeomBase TKG3d TKG2d
   TKXSBase TKMath TKernel

@@ -33,6 +33,7 @@ if(SNAPIR_WITH_OCCT)
     src/tessellate.cpp
     src/designx.cpp
     src/store.cpp
+    src/archive.cpp
   )
 endif()
 
@@ -46,6 +47,7 @@ if(SNAPIR_WITH_OCCT)
     TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep
     TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKOffset TKShHealing TKMesh
     TKDESTEP TKDEIGES TKDESTL TKXSBase
+    TKCDF TKLCAF TKCAF TKVCAF TKXCAF TKRWMesh TKDEGLTF
   )
   target_compile_definitions(snapir_core PUBLIC SNAPIR_WITH_OCCT=1)
 endif()
@@ -62,6 +64,9 @@ if(SNAPIR_WITH_OCCT)
 
   add_executable(check_export tools/check_export.cpp)
   target_link_libraries(check_export PRIVATE snapir_core)
+
+  add_executable(check_roundtrip tools/check_roundtrip.cpp)
+  target_link_libraries(check_roundtrip PRIVATE snapir_core)
 
   # The sidecar the desktop app spawns. Same name and location the packaged
   # Electron shell already looks for, so main.cjs is unchanged.
