@@ -38,12 +38,15 @@ const ROLES: { role: string; key: Key }[] = [
   { role: "control", key: "rControl" },
 ];
 
-// Two formats, for two different jobs. STEP is the body to work from and comes
-// back through the kernel exactly. STL is triangles, for opening the room in
-// something that will not read a STEP file.
+// Three formats, for three different jobs. STEP is the body to work from and
+// comes back through the kernel exactly. STL is triangles, for opening the
+// room in something that will not read a STEP file. DXF is a plan: a
+// horizontal section through the same body, for AutoCAD or anything else
+// that only wants a 2D drawing.
 const EXPORT_FORMATS = [
   { id: "step", label: "STEP", suffix: ".step" },
   { id: "stl", label: "STL", suffix: ".stl" },
+  { id: "dxf", label: "DXF", suffix: ".dxf" },
 ];
 const STEP_SCHEMAS = ["AP203", "AP214", "AP242"];
 

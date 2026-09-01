@@ -1,7 +1,7 @@
 # Snapir Design X
 
 Leica iCON room surveys to solid bodies. Interior volumes, exact B-rep out, and
-an STL alongside it for viewing.
+an STL or a DXF plan alongside it for viewing and 2D work.
 
 ## Status
 
@@ -11,30 +11,36 @@ input; the other four have real problems in the data and say so.
 
 ## Export formats
 
-Two, for two different jobs.
+Three, for three different jobs.
 
 | Format | Extension | What it is for |
 |---|---|---|
 | **STEP**, schema AP203 / AP214 / AP242 | `.step` | The body to work from. Exact B-rep: planes stay planes and the surveyed corner stays where the instrument put it. Opens in SolidWorks, Geomagic Design X, Rhino, Revit, Inventor, Fusion, CATIA. |
 | **STL**, binary | `.stl` | Viewing the room in something that will not open a STEP file. Triangles, so nothing should be measured off it. |
+| **DXF**, R12 ASCII | `.dxf` | A plan. A horizontal section through the same body, at its own mid-height, so it carries both wall faces - the surveyed inner ring and the grown outer one. For AutoCAD or anything else that only wants 2D. |
 
 `native/build/check_export` measures what each one costs rather than claiming
-it. Every room is built, written in both formats and read back through the same
-kernel. Across the 28-room reference survey:
+it. Every room is built, written in all three formats and read back through the
+same kernel. Across the 28-room reference survey:
 
 ```
-STEP exact everywhere, worst STL error 0.000013%
+STEP and DXF exact everywhere, worst STL error 0.000013%
 ```
 
-STEP returns with the same face count and zero volume drift. The STL is meshed
-at 0.1 mm, and because the rooms are almost entirely flat the triangles land
-nearly on the real surfaces — the worst room is out by about one part in eight
-million by volume. It is still triangles, and still not what to measure from.
+STEP returns with the same face count and zero volume drift. DXF is checked
+against an independent re-section of the same body and lands within float
+noise. The STL is meshed at 0.1 mm, and because the rooms are almost entirely
+flat the triangles land nearly on the real surfaces — the worst room is out by
+about one part in eight million by volume. It is still triangles, and still not
+what to measure from.
 
 **`.sldprt` cannot be written**, by Snapir or by anything else outside
 SolidWorks: the format is closed and undocumented. The same is true of
-Parasolid `.x_t` and ACIS `.sat`, which additionally need a paid licence.
-SolidWorks imports STEP natively, so AP242 is the route in.
+Parasolid `.x_t` and ACIS `.sat`, which additionally need a paid licence, and
+of **`.dwg`**: Autodesk's own format is closed too, and a real writer needs
+either Autodesk's libraries or the Open Design Alliance's Teigha SDK, neither
+of which is free. SolidWorks imports STEP natively, so AP242 is the route in;
+DXF is the route into AutoCAD until a licensed DWG writer is worth paying for.
 
 The geometry core is C++ linked against Open CASCADE. It runs behind the
 Windows desktop app and, unchanged, inside the Android app and the iOS app.

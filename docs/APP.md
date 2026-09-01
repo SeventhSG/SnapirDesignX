@@ -8,7 +8,7 @@
 | UI | React + TypeScript | Types catch the class of bug that makes a tool feel unreliable. |
 | Viewport | Three.js | Face picking by raycast, resolved back to real B-rep face ids. |
 | Backend | Python, bundled as a sidecar | The kernel work stays where OCCT lives. Not a website, not a localhost tab: the frontend talks to a private local process the user never sees. |
-| Kernel | OpenCASCADE via OCP | Analytic planes, exact booleans, STEP and STL out. |
+| Kernel | OpenCASCADE via OCP | Analytic planes, exact booleans, STEP, STL and DXF out. |
 
 It is a real desktop application. No browser, no URL, no server the user has to
 start.
@@ -28,7 +28,8 @@ Modelled on the Leica field platform, so it is familiar from site.
     v
   workspace       3D viewport, plan view, inspector
     v
-  export          one body per room: STEP to work from, or STL to look at
+  export          one body per room: STEP to work from, STL to look at,
+                  or DXF for a 2D plan
 ```
 
 ### Splash
@@ -138,9 +139,10 @@ show: there is one React app behind all three shells.
 |---|---|---|
 | STEP | `.step` | The body to work from. Schema AP203, AP214 or AP242; AP242 is the current one and what SolidWorks and Design X prefer. |
 | STL | `.stl` | Binary, meshed at 0.1 mm. For viewing only - it is triangles, and nothing should be measured off it. |
+| DXF | `.dxf` | R12 ASCII. A horizontal section through the same body, for AutoCAD or anything else that only wants a plan. |
 
-Both are written in millimetres. `.sldprt` is not writable by anything outside
-SolidWorks - see the README.
+All three are written in millimetres. `.sldprt` and `.dwg` are not writable by
+anything outside SolidWorks and Autodesk respectively - see the README.
 
 ## Escape hatch
 

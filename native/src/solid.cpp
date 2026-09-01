@@ -3,10 +3,16 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
+#include <Bnd_Box.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Section.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
@@ -15,6 +21,7 @@
 #include <BRepGProp.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
 #include <GProp_GProps.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <Interface_Static.hxx>
@@ -25,6 +32,7 @@
 #include <TopoDS.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Dir.hxx>
+#include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 
 namespace snapir {
@@ -587,11 +595,75 @@ std::string write_stl(const TopoDS_Shape& shape, const std::string& path) {
   return path;
 }
 
+std::string dxf_num(double v) {
+  std::ostringstream s;
+  s.setf(std::ios::fixed);
+  s.precision(6);
+  s << v;
+  return s.str();
+}
+
+// ASCII DXF (R12 entities), millimetres: a plan section through the solid,
+// not a separate drawing. The cut is a horizontal plane through the shape's
+// own mid-height, which lands inside the wall band for any room this builds
+// (floor and ceiling slabs are thin next to a wall run), so what comes back
+// is both wall faces at once: the surveyed inner ring and the grown outer
+// one, each edge exactly where the B-rep puts it.
+//
+// Edges are written as individual LINE entities rather than chained into
+// polylines - correct either way, and chaining wires back into loops through
+// shared faces isn't worth the code for what is meant to be opened and
+// traced over, not measured from.
+std::string write_dxf(const TopoDS_Shape& shape, const std::string& path) {
+  Bnd_Box box;
+  BRepBndLib::Add(shape, box);
+  if (box.IsVoid()) throw BuildError("DXF section failed: empty shape");
+  double xmin, ymin, zmin, xmax, ymax, zmax;
+  box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+  const double mid_z = (zmin + zmax) / 2.0;
+
+  const gp_Pln cut_plane(gp_Pnt(0, 0, mid_z), gp_Dir(0, 0, 1));
+  BRepAlgoAPI_Section section(shape, cut_plane, Standard_False);
+  section.Approximation(Standard_True);
+  section.Build();
+  if (!section.IsDone()) throw BuildError("DXF section failed: " + path);
+
+  ensure_parent(std::filesystem::u8path(path));
+  std::ofstream out(std::filesystem::u8path(path), std::ios::binary);
+  if (!out) throw BuildError("DXF write failed: " + path);
+
+  out << "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n"  // 4 = millimetres
+      << "0\nSECTION\n2\nENTITIES\n";
+
+  int segments = 0;
+  for (TopExp_Explorer ex(section.Shape(), TopAbs_EDGE); ex.More(); ex.Next()) {
+    BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
+    GCPnts_TangentialDeflection pts(curve, kStlAngularDeg * M_PI / 180.0, kStlDeflection);
+    for (int i = 1; i < pts.NbPoints(); ++i) {
+      const gp_Pnt a = pts.Value(i), b = pts.Value(i + 1);
+      out << "0\nLINE\n8\n0\n"
+          << "10\n" << dxf_num(a.X()) << "\n20\n" << dxf_num(a.Y()) << "\n30\n"
+          << dxf_num(a.Z()) << "\n"
+          << "11\n" << dxf_num(b.X()) << "\n21\n" << dxf_num(b.Y()) << "\n31\n"
+          << dxf_num(b.Z()) << "\n";
+      ++segments;
+    }
+  }
+  out << "0\nENDSEC\n0\nEOF\n";
+  out.close();
+  if (segments == 0) throw BuildError("DXF section carried no geometry: " + path);
+  return path;
+}
+
 }  // namespace
 
 const std::vector<ExportFormat>& export_formats() {
+  // dwg is deliberately absent - see the comment on ExportFormat in the
+  // header. Adding it later needs one row here and an export_dwg() beside
+  // export_dxf(); export_shape already dispatches on fmt, nothing else to
+  // redesign.
   static const std::vector<ExportFormat> v = {
-      {"step", ".step"}, {"stl", ".stl"}};
+      {"step", ".step"}, {"stl", ".stl"}, {"dxf", ".dxf"}};
   return v;
 }
 
@@ -627,6 +699,7 @@ std::string export_shape(const TopoDS_Shape& shape, const std::string& base_path
   ensure_parent(std::filesystem::u8path(path));
 
   if (fmt == "step") return export_step(shape, path, schema);
+  if (fmt == "dxf") return write_dxf(shape, path);
   return write_stl(shape, path);
 }
 

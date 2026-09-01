@@ -1,4 +1,4 @@
-// Solid construction and STEP export, on Open CASCADE.
+// Solid construction and export (STEP, STL, DXF), on Open CASCADE.
 //
 // Shape of a room body: the surveyed outline is the inner face of the walls.
 // An outer ring is offset outward by the wall thickness, floor and ceiling
@@ -72,12 +72,20 @@ SolidStats solid_stats(const TopoDS_Shape& shape);
 std::string export_step(const TopoDS_Shape& shape, const std::string& path,
                         const std::string& schema = "AP214");
 
-// The two ways a body leaves.
+// The three ways a body leaves.
 //
 // STEP is the one to work from: exact B-rep, planes stay planes and the
 // surveyed corner stays where the instrument put it. STL is triangles and is
-// only for looking at the room in something that will not open a STEP file.
-// Nothing downstream should be measured off the STL.
+// only for looking at the room in something that will not open a STEP file;
+// nothing downstream should be measured off it. DXF is a plan: a horizontal
+// section through the same B-rep, for opening in AutoCAD or handing to
+// someone who only has a 2D tool.
+//
+// DWG is not offered. It is Autodesk's closed, undocumented format; writing
+// it for real needs Autodesk's own libraries or the Open Design Alliance's
+// Teigha SDK, both under a paid licence this project does not hold. That
+// puts it with .sldprt, .x_t and .sat - formats this project refuses to
+// fake rather than ship wrong.
 struct ExportFormat {
   const char* id;      // what the API and the UI call it
   const char* suffix;  // including the dot

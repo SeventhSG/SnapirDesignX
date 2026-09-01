@@ -31,7 +31,7 @@ const en = {
   tFace: "Face", tSketch: "Sketch", tOpening: "Opening", tFixture: "Fixture",
   buildRoom: "Build", exportStep: "Export STEP", exportRoom: "Export",
   forDesignX: "For Design X",
-  formatHelp: "STEP is the exact body to work from. STL is triangles, for viewing only.",
+  formatHelp: "STEP is the exact body to work from. STL is triangles, for viewing only. DXF is a plan section, for AutoCAD.",
   schemaHelp: "STEP schema. AP242 is the current one and what SolidWorks and Design X prefer.",
 
   sketchTitle: "Edit outline",
@@ -151,7 +151,7 @@ const tr: Record<keyof typeof en, string> = {
   tFace: "Yüzey", tSketch: "Çizim", tOpening: "Boşluk", tFixture: "Tesisat",
   buildRoom: "Oluştur", exportStep: "STEP aktar", exportRoom: "Dışa aktar",
   forDesignX: "Design X için",
-  formatHelp: "STEP üzerinde çalışılacak tam gövdedir. STL üçgenlerdir, yalnızca görüntülemek içindir.",
+  formatHelp: "STEP üzerinde çalışılacak tam gövdedir. STL üçgenlerdir, yalnızca görüntülemek içindir. DXF, AutoCAD için bir kesit plandır.",
   schemaHelp: "STEP şeması. AP242 güncel olanıdır; SolidWorks ve Design X bunu tercih eder.",
 
   sketchTitle: "Oda hattını düzenle",
