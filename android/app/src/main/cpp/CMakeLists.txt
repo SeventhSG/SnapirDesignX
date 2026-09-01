@@ -37,7 +37,7 @@ target_compile_definitions(snapir PRIVATE SNAPIR_WITH_OCCT=1)
 # The link order matters for a static build: dependents before dependencies.
 set(OCCT_LIBS
   TKDESTEP TKDEIGES TKDESTL TKDEGLTF TKDE TKXCAF TKVCAF TKCAF TKLCAF TKCDF
-  TKRWMesh TKV3d TKService
+  TKRWMesh TKV3d TKHLR TKService
   TKOffset TKFillet TKBool TKBO TKPrim TKShHealing TKMesh
   TKTopAlgo TKGeomAlgo TKBRep TKGeomBase TKG3d TKG2d
   TKXSBase TKMath TKernel
