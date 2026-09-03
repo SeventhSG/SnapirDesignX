@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, panoramaUrl, type BuildResult, type Connection, type Project,
-         type Room, type Status } from "./api";
+import { api, panoramaUrl, type BuildResult, type Connection, type Crossing,
+         type Project, type Room, type Status } from "./api";
 import { t, type Key, type Lang } from "./i18n";
 import Sketch, { type EditMode } from "./Sketch";
 import Viewport, { ROLE_COLOR, type DoorLink, type GhostRoom } from "./Viewport";
@@ -456,6 +456,11 @@ export default function App() {
   const setRole = (name: string, role: string) =>
     patch({ roleOverrides: { [name]: role } }, true);
 
+  /** Say what a rectangle on a wall actually is. Keyed by the points it was
+   *  built from, so the answer sticks across every later rebuild. */
+  const setOpeningKind = (key: string, kind: string) =>
+    patch({ openingKindOverrides: { [key]: kind } }, true);
+
   /* ---------------- doors hooked to other rooms ---------------- */
 
   const linkDoor = async (openingA: number, roomBName: string, openingB: number) => {
@@ -731,6 +736,12 @@ export default function App() {
     () => result?.mesh.faces.find((f) => f.id === face) ?? null, [result, face]);
   const selectedPoint = useMemo(
     () => room?.points.find((p) => p.name === pointName) ?? null, [room, pointName]);
+  /** The wall rectangle the picked face belongs to, if it belongs to one. */
+  const selectedRect = useMemo(() => {
+    const key = selectedFace?.element;
+    if (!key || !room) return null;
+    return room.openings.find((o) => o.key === key) ?? null;
+  }, [selectedFace, room]);
 
   const counts = useMemo(() => tally(rooms), [rooms]);
 
@@ -795,6 +806,83 @@ export default function App() {
       await patch({ addedSegments: next, removedSegments: droppedLines }, true);
       say(T("lineAdded"));
     }
+  };
+
+  /** Next free name for a point the operator constructed rather than shot. */
+  const nextDerived = () => {
+    const used = new Set((room?.points ?? [])
+      .filter((p) => p.derived).map((p) => p.name));
+    for (let i = 1; ; i++) {
+      const name = `D_${String(i).padStart(3, "0")}`;
+      if (!used.has(name)) return name;
+    }
+  };
+
+  /**
+   * Run a line further than the survey reached. The far end becomes a
+   * constructed point; the original shot stays exactly where it was, and the
+   * line is re-drawn to the new end.
+   */
+  const extendLine = async ([an, bn]: [string, string], end: string,
+                            to: [number, number]) => {
+    if (!room) return;
+    const fixed = end === an ? bn : an;
+    const moving = room.points.find((p) => p.name === end);
+    if (!moving) return;
+
+    // Dragging the same constructed end again moves it, rather than leaving a
+    // trail of abandoned points behind.
+    const reuse = moving.derived;
+    const name = reuse ? end : nextDerived();
+    const derived = [
+      ...(room.points.filter((p) => p.derived && p.name !== name)
+          .map((p) => ({ name: p.name, x: p.x, y: p.y, z: p.z,
+                         role: p.role, from: p.source }))),
+      { name, x: to[0], y: to[1], z: moving.z, role: moving.role,
+        from: `extended from ${fixed}` },
+    ];
+
+    const body: Record<string, unknown> = { derivedPoints: derived };
+    if (!reuse) {
+      // The old line is replaced rather than added to, so the drawing never
+      // shows both the short and the long version of the same wall.
+      const dropped = [...droppedLines, [an, bn] as [string, string]];
+      const added: [string, string][] = [...addedLines, [fixed, name]];
+      setDroppedLines(dropped);
+      setAddedLines(added);
+      body.removedSegments = dropped;
+      body.addedSegments = added;
+    }
+    await patch(body, true);
+    setLineSel(reuse ? [fixed, name] : [fixed, name]);
+    say(T("lineExtended"));
+  };
+
+  /** Turn a place where two lines cross into a corner both of them share. */
+  const adoptCrossing = async (c: Crossing) => {
+    if (!room) return;
+    const name = nextDerived();
+    const [[a1, b1], [a2, b2]] = c.lines;
+    const z = room.floorZ ?? 0;
+
+    const derived = [
+      ...room.points.filter((p) => p.derived)
+        .map((p) => ({ name: p.name, x: p.x, y: p.y, z: p.z,
+                       role: p.role, from: p.source })),
+      { name, x: c.at[0], y: c.at[1], z, role: "floor",
+        from: `crossing of ${a1}-${b1} and ${a2}-${b2}` },
+    ];
+
+    // Both lines are split at the crossing, which is what makes it a join
+    // rather than two lines that merely overlap on screen.
+    const dropped: [string, string][] = [...droppedLines, [a1, b1], [a2, b2]];
+    const added: [string, string][] = [...addedLines,
+      [a1, name], [name, b1], [a2, name], [name, b2]];
+    setDroppedLines(dropped);
+    setAddedLines(added);
+    await patch({ derivedPoints: derived, removedSegments: dropped,
+                  addedSegments: added }, true);
+    say(T("cornerMade"));
   };
 
   /** Remove the line the operator has selected. */
@@ -1072,6 +1160,9 @@ export default function App() {
                         outline={room.outline} draft={ring}
                         selected={pointName} pending={pending}
                         selectedLine={lineSel}
+                        crossings={room.crossings ?? []}
+                        onExtend={extendLine}
+                        onAdoptCrossing={adoptCrossing}
                         mode={edit} onPick={pickPoint} onPickLine={setLineSel} />
               )}
 
@@ -1351,12 +1442,34 @@ export default function App() {
                   {selectedFace ? (
                     <dl className="kv">
                       <dt>{T("type")}</dt>
-                      <dd>{T(selectedFace.role === "floor" ? "floorFace"
-                        : selectedFace.role === "ceiling" ? "ceilingFace" : "wallFace")}</dd>
+                      {/* The face knows which element it belongs to now, so it
+                          can say "Boiler" or "Wall 3 of 11" rather than
+                          guessing from which way it points. */}
+                      <dd>{selectedFace.label
+                        || T(selectedFace.role === "floor" ? "floorFace"
+                          : selectedFace.role === "ceiling" ? "ceilingFace" : "wallFace")}</dd>
                       <dt>{T("area")}</dt><dd>{selectedFace.area.toFixed(2)} m²</dd>
                     </dl>
                   ) : <p className="quiet">—</p>}
-                  {selectedFace?.role === "wall" && (
+
+                  {/* A rectangle on a wall: the survey cannot tell a boiler
+                      from a window, so this is where the operator says. */}
+                  {selectedRect && (
+                    <>
+                      <label className="fldlabel">{T("whatIsThis")}</label>
+                      <div className="roles">
+                        {(room.openingKinds ?? []).map((k) => (
+                          <button key={k.kind}
+                                  className={"role" + (selectedRect.kind === k.kind ? " on" : "")}
+                                  onClick={() => setOpeningKind(selectedRect.key, k.kind)}>
+                            {k.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {selectedFace?.elementKind === "wall" && (
                     <>
                       <button className="btn sm delrow" onClick={doExportWall}
                               disabled={busy}>{T("exportWall")}</button>

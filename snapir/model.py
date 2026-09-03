@@ -19,6 +19,8 @@ class Role(str, Enum):
     PLUMBING = "plumbing"    # Su tesisat
     CONTROL = "control"      # VTARGET ArUco reference marker
     STATION = "station"      # instrument position
+    STAIRS = "stairs"        # one nosing of a climbed flight
+    PERVAZ = "pervaz"        # the floor-level shot of a skirting pair
     UNKNOWN = "unknown"      # needs a human decision
 
 
@@ -31,6 +33,15 @@ class Point:
     layer: str
     role: Role = Role.UNKNOWN
     index: int = 0           # shot order, parsed from P_nnn
+    # Constructed by the operator - a line extended to where it should reach,
+    # or the crossing of two runs - rather than measured by the instrument.
+    # Never written back to the survey, and never silently mistaken for a shot.
+    derived: bool = False
+    source: str = ""         # how it was constructed, for the provenance list
+    # The operator said what this point is. Inference must leave it alone -
+    # otherwise the next rebuild quietly re-derives the very thing they just
+    # corrected, and their decision looks like it never took.
+    pinned: bool = False
 
     @property
     def xy(self) -> tuple[float, float]:
@@ -47,12 +58,48 @@ class Jamb:
     points: list[Point] = field(default_factory=list)
 
 
+# What a rectangle surveyed on a wall turns out to be.
+#
+# The survey cannot tell these apart: a boiler, a window and a switch panel
+# are all four corners on a wall. Only the operator knows, so the classifier
+# guesses a door or a window from the sill height and the rest are theirs to
+# set. Doors and windows are cut through the wall; the others are fittings
+# that hang on it and stand out into the room.
+CUT_KINDS = ("door", "window")
+FITTING_KINDS = ("boiler", "socket", "lamp", "panel", "empty")
+OPENING_KINDS = CUT_KINDS + FITTING_KINDS
+
+# What each one is called on site, for the operator's own layer names.
+KIND_LABELS = {
+    "door": "Door", "window": "Window",
+    "boiler": "Boiler",          # бойлер
+    "socket": "Socket",          # щепсел
+    "lamp": "Wall lamp",         # лампа
+    "panel": "Panel",
+    "empty": "Nothing here",
+}
+
+
 @dataclass
 class Opening:
-    """A door or window, defined by two jambs on the same wall."""
+    """A rectangle on a wall: two jambs, a sill and a head.
+
+    Doors and windows are holes. A boiler, a socket panel or a wall lamp is
+    the same rectangle in the survey and a solid standing in the room, so what
+    gets built is decided by `kind`, not by the shape.
+    """
     left: Jamb
     right: Jamb
-    kind: str = "unknown"    # "door" | "window", inferred or set by the user
+    kind: str = "unknown"    # one of OPENING_KINDS, inferred or set by the user
+
+    @property
+    def cuts(self) -> bool:
+        """True when this rectangle is a hole rather than a fitting."""
+        return self.kind in CUT_KINDS or self.kind == "unknown"
+
+    @property
+    def height(self) -> float:
+        return self.head - self.sill
 
     @property
     def sill(self) -> float:
@@ -72,6 +119,57 @@ class Opening:
 
 
 @dataclass
+class Stair:
+    """A flight climbed in survey order: one point per step nosing.
+
+    Nothing pairs left and right edges here the way a jamb does — the
+    surveyor walks up shooting one line of nosings, so a flight is just that
+    line, in order.
+    """
+    points: list[Point] = field(default_factory=list)
+    # How the flight was traced: one shot per nosing, or the zigzag where the
+    # steps meet the wall, corner by corner. Two shots make up one step in the
+    # second case, so the step count cannot be read off the point count.
+    kind: str = "nosings"          # "nosings" | "zigzag"
+    steps: int = 0                 # risers climbed
+
+    @property
+    def rise(self) -> float:
+        return abs(self.points[-1].z - self.points[0].z) if len(self.points) >= 2 else 0.0
+
+    @property
+    def going(self) -> float:
+        """Plan length of the flight, nosing to nosing."""
+        return sum(
+            ((self.points[i + 1].x - self.points[i].x) ** 2 +
+             (self.points[i + 1].y - self.points[i].y) ** 2) ** 0.5
+            for i in range(len(self.points) - 1)
+        )
+
+
+@dataclass
+class Pervaz:
+    """Skirting, shot as a pair at one corner.
+
+    The surveyor puts one shot on the wall just above the board and one at
+    floor level on its outer face. The diagonal between them is the whole
+    measurement: the rise is the board's height, the plan offset is how far it
+    stands proud of the wall behind it.
+
+    The floor-level shot keeps the corner, since that is the one that measured
+    the floor. Neither shot is moved.
+    """
+    corner: Point            # the floor-level shot: this is the outline corner
+    wall: Point              # the shot on the wall above the board
+    height: float            # cm
+    depth: float             # cm the board stands proud of the wall
+
+    @property
+    def names(self) -> list[str]:
+        return [self.corner.name, self.wall.name]
+
+
+@dataclass
 class Issue:
     """Something the app cannot decide on its own."""
     severity: str            # "error" | "warning" | "info"
@@ -88,6 +186,8 @@ class Room:
     outline: list[Point] = field(default_factory=list)   # floor polygon, shot order
     ceiling: list[Point] = field(default_factory=list)
     openings: list[Opening] = field(default_factory=list)
+    stairs: list[Stair] = field(default_factory=list)
+    pervaz: list[Pervaz] = field(default_factory=list)
     controls: list[Point] = field(default_factory=list)
     # A room can be surveyed from several setups, each with its own panorama.
     # Distinct positions only: the instrument is written out again every time

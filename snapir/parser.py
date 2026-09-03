@@ -17,7 +17,8 @@ import math
 import re
 from pathlib import Path
 
-from .model import Issue, Jamb, Opening, Point, Project, Role, Room
+from .model import (Issue, Jamb, Opening, Pervaz, Point, Project, Role, Room,
+                    Stair)
 from .topology import build as build_topology, read_segments
 
 # Layer names as written by iCON trades, and what they mean.
@@ -45,6 +46,26 @@ CEILING_TOL = 18.0       # ceilings are not flat; allow real sag
 MIN_ROOM_HEIGHT = 150.0  # below this, the high band is not a ceiling
 MIN_JAMB_SPAN = 40.0     # a jamb has to be taller than this to be an opening
 JAMB_XY_TOL = 12.0       # two shots this close in plan are the same vertical
+
+# A flight climbs at a near-constant riser and tread, shot in survey order as
+# the surveyor walks up. Nothing else in a room survey produces that
+# signature, so it is recognised without asking the operator.
+STAIR_MIN_STEPS = 3      # fewer looks like noise, not a staircase
+STAIR_RISER_MIN = 10.0   # cm
+STAIR_RISER_MAX = 22.0   # cm
+STAIR_TREAD_MIN = 15.0   # cm, plan distance across one tread
+STAIR_TREAD_MAX = 40.0   # cm
+STAIR_RISER_TOL = 5.0    # cm, how much the riser may vary step to step
+STAIR_RUN_GAP = 3        # survey-order gap that still counts as the same flight
+STAIR_FLAT_TOL = 5.0     # cm; a tread move rises no more than this
+STAIR_PLUMB_TOL = 8.0    # cm; a riser move travels no further in plan than this
+
+# Pervaz: skirting, shot as two points at one corner. Nothing else in a survey
+# puts two floor shots this close together at two different heights.
+PERVAZ_DEPTH_MIN = 0.3   # cm the board stands proud of the wall
+PERVAZ_DEPTH_MAX = 8.0   # cm; beyond this it is not a skirting board
+PERVAZ_HEIGHT_MIN = 3.0  # cm
+PERVAZ_HEIGHT_MAX = 30.0  # cm
 
 
 def _f(v: str) -> float:
@@ -157,6 +178,11 @@ def _classify(room: Room) -> None:
         p.role = Role.FLOOR
     room.outline_source = "surveyed layer" if tagged else "inferred"
 
+    # Before anything is clustered or ringed: a skirting pair is two floor
+    # shots at one corner, and both of them landing in the outline is what
+    # doubles the ring.
+    _detect_pervaz(room)
+
     # Ceiling shots must be claimed before anything is clustered. A ceiling
     # corner often lands within a few centimetres of a window jamb in plan, and
     # if the two merge the cluster spans floor to ceiling and gets read as an
@@ -201,6 +227,9 @@ def _classify(room: Room) -> None:
         op.infer_kind(door_sill_max=floor_z + 20.0)
         room.openings.append(op)
 
+    _detect_stairs(room)
+    room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
+
     room.outline = sorted(
         (p for p in room.points if p.role is Role.FLOOR), key=lambda p: p.index
     )
@@ -233,6 +262,169 @@ def _cluster_xy(points: list[Point], tol: float = JAMB_XY_TOL) -> list[list[Poin
     return clusters
 
 
+
+
+def _detect_pervaz(room: Room) -> None:
+    """Fold every skirting pair back into a single outline corner.
+
+    Left alone, both shots are floor corners and the ring doubles: eight
+    corners where the room has four, a two-centimetre zigzag at each one, and
+    a floor plane fitted through two different heights. The room still
+    validates, which is the dangerous part.
+
+    The pair is recognised by its own geometry - two floor shots a
+    board's-depth apart in plan and a board's-height apart in Z. The
+    floor-level shot keeps the corner, because it is the one that measured
+    the floor; the wall shot leaves the outline and is remembered as the
+    skirting, standing proud by the distance between them.
+
+    Nothing is moved. An earlier version snapped the wall shot down to floor
+    level, which read well and destroyed the height difference the pair is
+    recognised by - so a second pass found nothing and every skirting record
+    vanished on the first correction the operator made.
+    """
+    # Both roles are candidates, not just FLOOR: after the first pass one of
+    # every pair is already PERVAZ, and a detector that could not see it would
+    # fail to re-pair and drop the board on the next rebuild.
+    floor_pts = sorted((p for p in room.points
+                        if p.role in (Role.FLOOR, Role.PERVAZ)),
+                       key=lambda p: p.index)
+    taken: set[str] = set()
+
+    for i, a in enumerate(floor_pts):
+        if a.name in taken or a.pinned:
+            continue
+        for b in floor_pts[i + 1:]:
+            if b.name in taken or b.pinned:
+                continue
+            dz = abs(a.z - b.z)
+            depth = _dist2d(a, b)
+            if not (PERVAZ_DEPTH_MIN <= depth <= PERVAZ_DEPTH_MAX
+                    and PERVAZ_HEIGHT_MIN <= dz <= PERVAZ_HEIGHT_MAX):
+                continue
+            wall, outer = (a, b) if a.z > b.z else (b, a)
+            room.pervaz.append(Pervaz(corner=outer, wall=wall,
+                                      height=dz, depth=depth))
+            outer.role = Role.FLOOR
+            wall.role = Role.PERVAZ
+            taken.add(a.name)
+            taken.add(b.name)
+            break
+
+
+def _step_move(a: Point, b: Point) -> str | None:
+    """What one shot-to-shot move is, if it is part of a flight at all.
+
+    Two ways a surveyor traces a staircase, and the app must not care which:
+
+    `nosing`  one shot per step at the front edge, so every move goes forward
+              and up at once.
+    `tread` / `riser`
+              the zigzag where the steps meet the wall, shot corner by corner,
+              so moves alternate between flat along a tread and straight up a
+              riser. This is what comes back when only the side wall is shot.
+    """
+    dz = b.z - a.z
+    dxy = _dist2d(a, b)
+    riser = STAIR_RISER_MIN <= abs(dz) <= STAIR_RISER_MAX
+    tread = STAIR_TREAD_MIN <= dxy <= STAIR_TREAD_MAX
+    if riser and tread:
+        return "nosing"
+    if riser and dxy <= STAIR_PLUMB_TOL:
+        return "riser"
+    if tread and abs(dz) <= STAIR_FLAT_TOL:
+        return "tread"
+    return None
+
+
+def _stair_run(pts: list[Point], start: int) -> tuple[int, int]:
+    """Longest coherent flight starting at `start`.
+
+    Returns (one past the last point of the run, how many risers it climbed).
+    A flight is either all nosing moves or a clean alternation of treads and
+    risers - never a mixture, which is what noise looks like.
+    """
+    mode = prev = None
+    climbing = last_rise = None
+    risers = 0
+    j = start
+    while j < len(pts) - 1:
+        move = _step_move(pts[j], pts[j + 1])
+        if move is None:
+            break
+        if mode is None:
+            mode = "nosing" if move == "nosing" else "zigzag"
+        if (mode == "nosing") != (move == "nosing"):
+            break
+        if mode == "zigzag" and move == prev:
+            break                       # two treads or two risers in a row
+        if move in ("nosing", "riser"):
+            dz = pts[j + 1].z - pts[j].z
+            if climbing is None:
+                climbing = dz > 0
+            elif (dz > 0) != climbing:
+                break                   # a flight does not change its mind
+            if last_rise is not None and abs(abs(dz) - last_rise) > STAIR_RISER_TOL:
+                break
+            last_rise = abs(dz)
+            risers += 1
+        prev = move
+        j += 1
+    return (j + 1 if j > start else start + 1), risers
+
+
+def _detect_stairs(room: Room) -> None:
+    """Tag a stepped run of leftover shots as Role.STAIRS.
+
+    Works in survey order, not plan clusters: a flight advances as it climbs,
+    so its shots never land in the same XY cluster the way a jamb's do. A run
+    counts once it climbs at least STAIR_MIN_STEPS risers at a consistent
+    height; anything shorter or less regular is left UNKNOWN, same as any
+    other unresolved shot, for the operator to tag by hand.
+    """
+    pts = sorted((p for p in room.points
+                  if p.role is Role.UNKNOWN and not p.pinned), key=lambda p: p.index)
+    i = 0
+    while i < len(pts) - 1:
+        end, risers = _stair_run(pts, i)
+        if risers >= STAIR_MIN_STEPS:
+            for p in pts[i:end]:
+                p.role = Role.STAIRS
+            i = end
+        else:
+            i += 1
+
+
+def _run_shape(points: list[Point]) -> tuple[str, int]:
+    """How a tagged flight was shot, and how many risers it climbs."""
+    moves = [_step_move(a, b) for a, b in zip(points, points[1:])]
+    kind = "nosings" if any(m == "nosing" for m in moves) else "zigzag"
+    return kind, sum(1 for m in moves if m in ("nosing", "riser"))
+
+
+def _group_stairs(points: list[Point]) -> list[Stair]:
+    """Split every Role.STAIRS point into flights by survey-order gaps.
+
+    Covers both the auto-detected run and any points the operator promoted or
+    demoted by hand afterwards - grouping is all that is needed once the role
+    is already decided.
+    """
+    pts = sorted(points, key=lambda p: p.index)
+    if not pts:
+        return []
+    runs: list[list[Point]] = [[pts[0]]]
+    for p in pts[1:]:
+        if p.index - runs[-1][-1].index <= STAIR_RUN_GAP:
+            runs[-1].append(p)
+        else:
+            runs.append([p])
+    out = []
+    for r in runs:
+        if len(r) < 2:
+            continue
+        kind, risers = _run_shape(r)
+        out.append(Stair(points=r, kind=kind, steps=risers))
+    return out
 
 
 def _validate(room: Room) -> None:
@@ -340,6 +532,11 @@ def rebuild(room: Room) -> None:
     inferred from the old reading has to be worked out again: the outline, the
     ceiling set, and the openings.
     """
+    # Skirting pairs first: one of the two shots leaves the outline, so this
+    # has to settle before the ring is read off the floor roles.
+    room.pervaz = []
+    _detect_pervaz(room)
+
     room.outline = sorted(
         (p for p in room.points if p.role is Role.FLOOR), key=lambda p: p.index)
     room.ceiling = sorted(
@@ -362,20 +559,29 @@ def rebuild(room: Room) -> None:
             op.infer_kind(door_sill_max=floor_z + 20.0)
             room.openings.append(op)
 
+    _detect_stairs(room)
+    room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
+
     room.issues = []
     _validate(room)
 
 
 ASSIGNABLE = ("floor", "ceiling", "opening", "socket", "plumbing",
-              "control", "unknown")
+              "control", "unknown", "stairs", "pervaz")
 
 
 def apply_roles(room: Room, roles: dict[str, str]) -> None:
-    """Set point roles by name, then rebuild everything derived from them."""
+    """Set point roles by name, then rebuild everything derived from them.
+
+    A point the operator has named is pinned: the detectors that run during
+    the rebuild skip it, so their guess cannot quietly overwrite the answer
+    they just gave.
+    """
     for p in room.points:
         wanted = roles.get(p.name)
         if wanted in ASSIGNABLE:
             p.role = Role(wanted)
+            p.pinned = True
     rebuild(room)
 
 
@@ -461,6 +667,9 @@ def _from_drawn_lines(room: Room) -> bool:
             for q in a.points + b.points:
                 q.role = Role.OPENING
 
+    _detect_stairs(room)
+    room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
+
     room.controls = [p for p in room.points if p.role is Role.CONTROL]
     return True
 
@@ -473,6 +682,8 @@ def reread_topology(room: Room) -> None:
     room.outline = []
     room.ceiling = []
     room.openings = []
+    room.stairs = []
+    room.pervaz = []
     room.links = []
     room.issues = []
     if not _from_drawn_lines(room):

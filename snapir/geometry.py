@@ -79,6 +79,59 @@ def project_onto_edges(pt: Pt, ring: list[Pt]) -> tuple[int, Pt, float]:
     return best
 
 
+def line_intersection(a: Pt, b: Pt, c: Pt, d: Pt) -> Pt | None:
+    """Where the infinite lines through a-b and c-d meet.
+
+    Infinite, not segment-bounded, because the useful case is two wall runs
+    that stop short of the corner they imply: the corner nobody could stand
+    in is exactly the one worth constructing.
+
+    None when they are parallel, or as near parallel as makes no difference.
+    """
+    r = (b[0] - a[0], b[1] - a[1])
+    s = (d[0] - c[0], d[1] - c[1])
+    denom = r[0] * s[1] - r[1] * s[0]
+    if abs(denom) < 1e-9:
+        return None
+    t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / denom
+    return (a[0] + t * r[0], a[1] + t * r[1])
+
+
+def extend(a: Pt, b: Pt, distance: float) -> Pt:
+    """Push b further from a, along their own direction."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = (dx * dx + dy * dy) ** 0.5
+    if length < 1e-9:
+        return b
+    return (b[0] + dx / length * distance, b[1] + dy / length * distance)
+
+
+def crossings(segments: list[tuple[Pt, Pt]]) -> list[tuple[int, int, Pt]]:
+    """Every pair of segments that actually cross, and where.
+
+    Shared endpoints do not count: two walls meeting at a surveyed corner are
+    already joined, and reporting that as a crossing would turn every corner
+    of every room into a discovery.
+    """
+    out: list[tuple[int, int, Pt]] = []
+    for i in range(len(segments)):
+        a, b = segments[i]
+        for j in range(i + 1, len(segments)):
+            c, d = segments[j]
+            if _shares_end((a, b), (c, d)):
+                continue
+            if not _crosses(a, b, c, d):
+                continue
+            at = line_intersection(a, b, c, d)
+            if at is not None:
+                out.append((i, j, at))
+    return out
+
+
+def _shares_end(s1: tuple[Pt, Pt], s2: tuple[Pt, Pt], tol: float = 0.5) -> bool:
+    return any(_dist(p, q) <= tol for p in s1 for q in s2)
+
+
 def _closest_on_segment(p: Pt, a: Pt, b: Pt) -> Pt:
     ax, ay = a
     bx, by = b

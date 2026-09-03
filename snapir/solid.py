@@ -17,7 +17,7 @@ from pathlib import Path
 from shapely.geometry import Polygon
 
 from .geometry import ensure_ccw, project_onto_edges
-from .model import Opening, Room
+from .model import Jamb, Opening, Room
 from .planes import Plane, fit_or_level, level_plane
 from .settings import BuildSettings
 
@@ -36,7 +36,7 @@ class BuildError(RuntimeError):
 
 def _occ():
     """Import OCCT lazily so the parser and viewer load without the kernel."""
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
     from OCP.BRepBuilderAPI import (BRepBuilderAPI_MakeFace,
                                     BRepBuilderAPI_MakePolygon,
                                     BRepBuilderAPI_MakeSolid,
@@ -49,6 +49,7 @@ def _occ():
 
     return {
         "Cut": BRepAlgoAPI_Cut,
+        "Fuse": BRepAlgoAPI_Fuse,
         "Polygon": BRepBuilderAPI_MakePolygon,
         "Face": BRepBuilderAPI_MakeFace,
         "Sewing": BRepBuilderAPI_Sewing,
@@ -179,7 +180,8 @@ def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ):
 
 
 def build_room(room: Room, cfg: BuildSettings, openings=None,
-               fixture_overrides: dict | None = None):
+               fixture_overrides: dict | None = None,
+               removed_walls: list[str] | None = None):
     """Build one room shell. Returns an OCCT solid."""
     if len(room.outline) < 3:
         raise BuildError(f"{room.name}: outline has fewer than three points")
@@ -206,13 +208,47 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
         raise BuildError(f"{room.name}: could not subtract the room volume")
     shape = cut.Shape()
 
+    # A wall the operator marked as not really there is cut the same way a
+    # doorway is: full height, corner to corner, through the whole edge. The
+    # key names its two corners, so a wall that no longer exists in the ring
+    # (its corner was dropped, or the ring redrawn) is skipped rather than
+    # taking a different wall down with it.
+    from .elements import wall_edge_for_key
+
+    for key in sorted(set(removed_walls or [])):
+        i = wall_edge_for_key(room, key)
+        if i is None:
+            continue
+        c = occ["Cut"](shape, _removed_wall_opening(inner_ring, floor, ceiling, i, cfg, occ))
+        c.Build()
+        if not c.IsDone():
+            raise BuildError(f"{room.name}: could not remove wall {i + 1}")
+        shape = c.Shape()
+
+    rects = list(openings if openings is not None else room.openings)
+
     if cfg.cut_openings:
-        for op in (openings if openings is not None else room.openings):
+        # Only the rectangles that are actually holes. A boiler or a socket
+        # panel is the same four corners in the survey and must not be cut
+        # through the wall.
+        for op in (o for o in rects if o.cuts):
             c = occ["Cut"](shape, _opening_cutter(op, inner_ring, cfg, occ))
             c.Build()
             if not c.IsDone():
                 raise BuildError(f"{room.name}: opening cut failed")
             shape = c.Shape()
+
+    if cfg.include_fittings:
+        for op in (o for o in rects if not o.cuts and o.kind != "empty"):
+            try:
+                body = _fitting_body(op, inner_ring, cfg, occ)
+            except (BuildError, RuntimeError):
+                continue
+            f = occ["Fuse"](shape, body)
+            f.Build()
+            if not f.IsDone():
+                raise BuildError(f"{room.name}: could not place the {op.kind}")
+            shape = f.Shape()
 
     if cfg.include_fixtures:
         shape, stray = _add_fixtures(shape, room, inner_ring, cfg, occ,
@@ -224,9 +260,111 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
                 f"{len(stray)} service point(s) did not meet any wall and were "
                 "left out of the body.", points=stray))
 
+    if cfg.include_stairs and room.stairs:
+        for step, body in enumerate(_stairs_bodies(room, cfg, floor, occ)):
+            f = occ["Fuse"](shape, body)
+            f.Build()
+            if not f.IsDone():
+                raise BuildError(f"{room.name}: could not fuse stair step {step + 1}")
+            shape = f.Shape()
+
     if not occ["Check"](shape).IsValid():
         raise BuildError(f"{room.name}: resulting solid is not valid")
     return shape
+
+
+def _removed_wall_opening(ring, floor: Plane, ceiling: Plane, i: int,
+                          cfg: BuildSettings, occ):
+    """A synthetic opening spanning the whole edge, floor to ceiling.
+
+    Reuses the opening cutter rather than re-deriving a variable-thickness
+    offset ring: cutting the entire wall out is exactly what an opening the
+    width of the wall already does.
+    """
+    ax, ay = ring[i]
+    bx, by = ring[(i + 1) % len(ring)]
+    left = Jamb(x=ax, y=ay, z_bottom=floor.z_at(ax, ay), z_top=ceiling.z_at(ax, ay))
+    right = Jamb(x=bx, y=by, z_bottom=floor.z_at(bx, by), z_top=ceiling.z_at(bx, by))
+    return _opening_cutter(Opening(left=left, right=right, kind="removed"), ring, cfg, occ)
+
+
+def _fitting_body(op: Opening, ring, cfg: BuildSettings, occ):
+    """The solid a wall rectangle stands up as, when it is not a hole.
+
+    All of them are seated on the wall the rectangle was shot on and grow
+    inward from it, so the surveyed face stays where the instrument put it -
+    the same rule the walls themselves follow. Depth is not in the survey; it
+    comes from settings, per kind.
+    """
+    cx, cy = (op.left.x + op.right.x) / 2, (op.left.y + op.right.y) / 2
+    (sx, sy), (nx, ny), (tx, ty), _dist = _wall_frame(cx, cy, ring)
+
+    depth = {"boiler": cm(cfg.boiler_depth), "lamp": cm(cfg.lamp_depth)}.get(
+        op.kind, cm(cfg.panel_depth))
+    # Every fitting reaches a little way into the wall. Sitting exactly on the
+    # surface looks right and fuses badly: a round tank touching a flat wall
+    # meets it along a single line, and the kernel hands back two solids that
+    # merely happen to touch instead of one body.
+    bite = cm(cfg.socket_embed)
+
+    if op.kind == "boiler":
+        # A tank: round, upright, its back in the wall.
+        from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+        from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+        radius = min(depth, max(op.width, 1.0) / 2)
+        reach = max(radius - min(bite, radius / 2), 0.1)
+        base = gp_Pnt((sx + nx * reach) * CM_TO_MM,
+                      (sy + ny * reach) * CM_TO_MM, op.sill * CM_TO_MM)
+        axis = gp_Ax2(base, gp_Dir(0.0, 0.0, 1.0))
+        return BRepPrimAPI_MakeCylinder(
+            axis, radius * CM_TO_MM, max(op.height, 1.0) * CM_TO_MM).Shape()
+
+    # Everything else is a box the size of the rectangle, standing proud.
+    half = max(op.width, 1.0) / 2
+    back, front = -bite, depth
+    corners = [
+        (sx + tx * half + nx * back, sy + ty * half + ny * back),
+        (sx - tx * half + nx * back, sy - ty * half + ny * back),
+        (sx - tx * half + nx * front, sy - ty * half + ny * front),
+        (sx + tx * half + nx * front, sy + ty * half + ny * front),
+    ]
+    return _prism(corners, level_plane(op.sill), level_plane(op.head), occ)
+
+
+def _stairs_bodies(room: Room, cfg: BuildSettings, floor: Plane, occ) -> list:
+    """One box per step, stacked from the floor up to that step's height.
+
+    Only the nosing line is shot, so each box is centred on the line and
+    given the settings' flight width - there is nothing else in the survey to
+    derive it from. This is the stair as built mass, not the void beneath it.
+    """
+    width = cm(cfg.stair_width)
+    bodies = []
+    for stair in room.stairs:
+        pts = stair.points
+        for i in range(len(pts) - 1):
+            a, b = pts[i], pts[i + 1]
+            dx, dy = b.x - a.x, b.y - a.y
+            length = (dx * dx + dy * dy) ** 0.5
+            if length < 1.0:
+                continue
+            tx, ty = dx / length, dy / length
+            nx, ny = ty, -tx
+            hw = width / 2
+            corners = [
+                (a.x + nx * hw, a.y + ny * hw),
+                (b.x + nx * hw, b.y + ny * hw),
+                (b.x - nx * hw, b.y - ny * hw),
+                (a.x - nx * hw, a.y - ny * hw),
+            ]
+            bottom = level_plane(floor.z_at(a.x, a.y))
+            top = level_plane(max(a.z, b.z))
+            try:
+                bodies.append(_prism(corners, bottom, top, occ))
+            except BuildError:
+                continue
+    return bodies
 
 
 def solid_stats(shape) -> dict:

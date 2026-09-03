@@ -29,6 +29,18 @@ class BuildSettings:
     confirm_openings_per_room: bool = True
     door_sill_max: float = 80.0          # sill at or under this reads as a door
 
+    # Stairs. Only the nosing line is shot, so the flight is given a width
+    # rather than measured across - there is nothing else to derive it from.
+    include_stairs: bool = True
+    stair_width: float = 900.0           # mm
+
+    # Wall fittings. The survey gives the rectangle on the wall; how far the
+    # thing stands out of it is not measured, so it comes from here.
+    include_fittings: bool = True
+    boiler_depth: float = 400.0          # mm; a tank, drawn round
+    lamp_depth: float = 120.0            # mm
+    panel_depth: float = 40.0            # mm, a socket or switch plate
+
     # Fixtures. Single surveyed points on the Kontak and Su tesisat layers are
     # real building services, so they become real geometry. Every fixture is
     # anchored to the wall it belongs to, never left floating.

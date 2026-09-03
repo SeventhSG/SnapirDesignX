@@ -13,6 +13,22 @@ export interface Issue {
 
 export interface Point {
   name: string; x: number; y: number; z: number; role: string; layer: string;
+  /** Constructed by the operator, not measured by the instrument. */
+  derived?: boolean;
+  source?: string;
+}
+
+/** Where two drawn lines cross: a corner the operator can adopt. */
+export interface Crossing {
+  at: [number, number];
+  lines: [[string, string], [string, string]];
+}
+
+/** One addressable piece of the built body, named after the points it came
+ *  from. Unlike a face id, this survives a rebuild. */
+export interface Element {
+  kind: string; key: string; label: string;
+  index: number | null; points: string[];
 }
 
 /** Where the instrument stood. One setup per panorama, so this is also
@@ -24,6 +40,15 @@ export interface Station {
 export interface Opening {
   index: number; kind: string; width: number; sill: number; head: number;
   left: [number, number]; right: [number, number];
+  /** Stable name for this rectangle, so a choice about it survives a rebuild. */
+  key: string;
+  /** True when it is a hole. False when it is something mounted on the wall. */
+  cuts: boolean;
+}
+
+/** What a rectangle on a wall is allowed to be. */
+export interface OpeningKind {
+  kind: string; label: string;
 }
 
 export interface Room {
@@ -31,7 +56,9 @@ export interface Room {
   panoramas: number; stations: Station[];
   area: number; ceilingHeight: number | null; floorZ: number | null;
   outline: string[]; points: Point[]; openings: Opening[]; issues: Issue[];
+  openingKinds: OpeningKind[];
   segments: [string, string][]; links: [string, string][];
+  crossings: Crossing[]; elements: Element[];
   status: Status; builtAt: string | null; stepPath: string | null;
 }
 
@@ -51,6 +78,11 @@ export interface Connection {
 export interface FaceInfo {
   id: number; kind: string; area: number; role: string;
   normal: [number, number, number]; centroid: [number, number, number];
+  /** Which element of the room this face belongs to. `id` is only good for
+   *  one build; `element` outlives a rebuild. */
+  element?: string;
+  elementKind?: string;
+  label?: string;
 }
 
 export interface Mesh {

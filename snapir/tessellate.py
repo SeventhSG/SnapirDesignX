@@ -20,6 +20,12 @@ class FaceInfo:
     normal: tuple[float, float, float]
     centroid: tuple[float, float, float]
     role: str = "wall"              # "floor" | "ceiling" | "wall" | "reveal"
+    # Which element of the room this face belongs to. `id` above is an OCCT
+    # ordinal and is only good for this one build; `element` survives a
+    # rebuild, so it is what a remembered decision is keyed on.
+    element: str = ""               # e.g. "wall:P_003|P_004"
+    element_kind: str = ""          # wall|floor|ceiling|opening|fitting|fixture|stairs|pervaz
+    label: str = ""                 # e.g. "Wall 3 of 11"
 
 
 @dataclass
@@ -44,7 +50,8 @@ class Mesh:
                     "id": f.id, "kind": f.kind, "area": round(f.area_m2, 4),
                     "normal": [round(v, 6) for v in f.normal],
                     "centroid": [round(v, 4) for v in f.centroid],
-                    "role": f.role,
+                    "role": f.role, "element": f.element,
+                    "elementKind": f.element_kind, "label": f.label,
                 }
                 for f in self.faces
             ],
@@ -52,12 +59,16 @@ class Mesh:
         }
 
 
-def tessellate(shape, deflection: float = 1.0, angular: float = 0.3) -> Mesh:
+def tessellate(shape, deflection: float = 1.0, angular: float = 0.3,
+               room=None, cfg=None) -> Mesh:
     """Mesh a solid for display. Deflection is in millimetres.
 
     One millimetre is far finer than anything visible on screen and keeps the
     buffers small, because every face here is planar and meshes into a handful
     of triangles regardless of the setting.
+
+    Pass the room and its build settings to have every face named: without
+    them the mesh still draws, it just cannot say what anything is.
     """
     from OCP.BRep import BRep_Tool
     from OCP.BRepGProp import BRepGProp
@@ -125,7 +136,22 @@ def tessellate(shape, deflection: float = 1.0, angular: float = 0.3) -> Mesh:
         ))
         face_id += 1
 
+    if room is not None:
+        _name_faces(mesh, room, cfg)
     return mesh
+
+
+def _name_faces(mesh: Mesh, room, cfg) -> None:
+    """Attribute every meshed face back to the element it was built from."""
+    from .elements import elements, face_element
+    from .settings import BuildSettings
+
+    cfg = cfg or BuildSettings()
+    table = elements(room)
+    for f in mesh.faces:
+        el = face_element(room, cfg, f.centroid, f.normal, table)
+        if el is not None:
+            f.element, f.element_kind, f.label = el.key, el.kind, el.label
 
 
 def _face_role(nz: float) -> str:

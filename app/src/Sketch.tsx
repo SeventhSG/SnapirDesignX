@@ -8,8 +8,8 @@
  * Line:    click two points to connect them, click the same pair to unlink.
  * Layer:   click a point to select it and set what it is.
  */
-import { useMemo } from "react";
-import type { Point } from "./api";
+import { useMemo, useRef, useState } from "react";
+import type { Crossing, Point } from "./api";
 import { ROLE_COLOR } from "./Viewport";
 
 export type EditMode = "outline" | "line" | "layer";
@@ -22,9 +22,14 @@ interface Props {
   selected: string | null;
   pending: string | null;          // first end of a line being drawn
   selectedLine: [string, string] | null;
+  crossings: Crossing[];
   mode: EditMode;
   onPick: (name: string) => void;
   onPickLine: (seg: [string, string] | null) => void;
+  /** Drag a selected line's end further along its own direction. */
+  onExtend: (seg: [string, string], end: string, to: [number, number]) => void;
+  /** Turn a place where two lines cross into a corner. */
+  onAdoptCrossing: (c: Crossing) => void;
 }
 
 /** What a line is, judged only by what it joins. */
@@ -46,11 +51,15 @@ const LINE_STYLE: Record<string, { stroke: string; w: number; dash?: string }> =
 };
 
 export default function Sketch({
-  points, segments, outline, draft, selected, pending, selectedLine,
-  mode, onPick, onPickLine,
+  points, segments, outline, draft, selected, pending, selectedLine, crossings,
+  mode, onPick, onPickLine, onExtend, onAdoptCrossing,
 }: Props) {
   const key2 = (a: string, b: string) => [a, b].sort().join("|");
   const chosen = selectedLine ? key2(selectedLine[0], selectedLine[1]) : null;
+  const svg = useRef<SVGSVGElement>(null);
+  // While dragging, the moving end is drawn from here rather than from the
+  // point, so the line follows the finger without a round trip to the backend.
+  const [drag, setDrag] = useState<{ end: string; at: [number, number] } | null>(null);
   const box = useMemo(() => {
     const xs = points.map((p) => p.x);
     const ys = points.map((p) => p.y);
@@ -64,6 +73,38 @@ export default function Sketch({
   const byName = useMemo(() => new Map(points.map((p) => [p.name, p])), [points]);
   const ring = mode === "outline" ? draft : outline;
 
+  /** Pointer position in survey centimetres. */
+  const atCursor = (e: React.PointerEvent): [number, number] => {
+    const m = svg.current?.getScreenCTM();
+    if (!m) return [0, 0];
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    return [pt.x, -pt.y];                 // the view draws y downward
+  };
+
+  /**
+   * Where the dragged end lands: the foot of the cursor on the line's own
+   * direction, never off it. A wall's direction was measured; only how far it
+   * runs is in question, so dragging may lengthen or shorten a line and may
+   * not swing it.
+   */
+  const alongLine = (fixed: Point, moving: Point, to: [number, number]): [number, number] => {
+    const dx = moving.x - fixed.x, dy = moving.y - fixed.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-9) return to;
+    const t = ((to[0] - fixed.x) * dx + (to[1] - fixed.y) * dy) / len2;
+    return [fixed.x + dx * t, fixed.y + dy * t];
+  };
+
+  const handles: { name: string; other: string; at: [number, number] }[] = [];
+  if (selectedLine) {
+    const [an, bn] = selectedLine;
+    const a = byName.get(an), b = byName.get(bn);
+    if (a && b) {
+      handles.push({ name: an, other: bn, at: [a.x, a.y] });
+      handles.push({ name: bn, other: an, at: [b.x, b.y] });
+    }
+  }
+
   const ringPath = ring
     .map((n) => byName.get(n))
     .filter(Boolean)
@@ -72,22 +113,27 @@ export default function Sketch({
 
   return (
     <div className="sketch">
-      <svg viewBox={box} preserveAspectRatio="xMidYMid meet">
+      <svg ref={svg} viewBox={box} preserveAspectRatio="xMidYMid meet">
         {/* Every surveyed line, drawn for what it is. */}
         {segments.map(([an, bn], i) => {
           const a = byName.get(an), b = byName.get(bn);
           if (!a || !b) return null;
+          // A line whose end is being dragged follows the finger straight
+          // away, rather than waiting for the backend to agree.
+          const pull = (p: Point): [number, number] =>
+            drag && drag.end === p.name ? drag.at : [p.x, p.y];
+          const [ax, ay] = pull(a), [bx, by] = pull(b);
           const st = LINE_STYLE[segmentKind(a, b)];
           const isSel = chosen === key2(an, bn);
           return (
             <g key={`${an}-${bn}-${i}`}>
               {/* A wide invisible line makes a 1px stroke easy to hit. */}
-              <line x1={a.x} y1={-a.y} x2={b.x} y2={-b.y}
+              <line x1={ax} y1={-ay} x2={bx} y2={-by}
                     stroke="transparent" strokeWidth={14}
                     vectorEffect="non-scaling-stroke"
                     style={{ cursor: "pointer" }}
                     onClick={() => onPickLine(isSel ? null : [an, bn])} />
-              <line x1={a.x} y1={-a.y} x2={b.x} y2={-b.y}
+              <line x1={ax} y1={-ay} x2={bx} y2={-by}
                     stroke={isSel ? "var(--ok)" : st.stroke}
                     strokeWidth={isSel ? st.w + 2.5 : st.w}
                     strokeDasharray={st.dash} strokeLinecap="round"
@@ -95,6 +141,48 @@ export default function Sketch({
                     style={{ pointerEvents: "none" }}
                     opacity={mode === "line" ? 1 : 0.85} />
             </g>
+          );
+        })}
+
+        {/* Where two lines cross. Tap one to make it a corner. */}
+        {crossings.map((c, i) => (
+          <g key={`x-${i}`} style={{ cursor: "pointer" }}
+             onClick={() => onAdoptCrossing(c)}>
+            <circle cx={c.at[0]} cy={-c.at[1]} r={13} fill="transparent" />
+            <circle cx={c.at[0]} cy={-c.at[1]} r={7} fill="none"
+                    stroke="var(--ok)" strokeWidth={2.4} strokeDasharray="3 3"
+                    vectorEffect="non-scaling-stroke" />
+            <title>Two lines cross here - tap to make it a corner</title>
+          </g>
+        ))}
+
+        {/* Grab either end of the selected line to run it further. */}
+        {handles.map((h) => {
+          const at = drag && drag.end === h.name ? drag.at : h.at;
+          return (
+            <circle key={`h-${h.name}`} cx={at[0]} cy={-at[1]} r={10}
+                    fill="var(--ok)" stroke="var(--panel)" strokeWidth={2.5}
+                    vectorEffect="non-scaling-stroke"
+                    style={{ cursor: "grab", touchAction: "none" }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      (e.target as Element).setPointerCapture(e.pointerId);
+                      setDrag({ end: h.name, at: h.at });
+                    }}
+                    onPointerMove={(e) => {
+                      if (!drag || drag.end !== h.name) return;
+                      const fixed = byName.get(h.other), moving = byName.get(h.name);
+                      if (!fixed || !moving) return;
+                      setDrag({ end: h.name, at: alongLine(fixed, moving, atCursor(e)) });
+                    }}
+                    onPointerUp={(e) => {
+                      if (drag && drag.end === h.name && selectedLine) {
+                        const moved = Math.hypot(drag.at[0] - h.at[0], drag.at[1] - h.at[1]);
+                        if (moved > 1) onExtend(selectedLine, h.name, drag.at);
+                      }
+                      (e.target as Element).releasePointerCapture(e.pointerId);
+                      setDrag(null);
+                    }} />
           );
         })}
 

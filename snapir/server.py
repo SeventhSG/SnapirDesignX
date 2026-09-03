@@ -17,8 +17,10 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .elements import elements as room_elements
+from .elements import opening_key as _opening_key
 from .geometry import polygon_area
-from .model import Room
+from .model import KIND_LABELS, OPENING_KINDS, Room
 from .parser import read_project, read_room
 from .settings import BuildSettings
 from .solid import BuildError, build_room, export_step, room_planes, solid_stats
@@ -58,6 +60,26 @@ def _apply_overrides(pid: str, room: Room) -> Room:
     ov = store.get(pid).overrides.get(room.name)
     if not ov:
         return room
+    if ov.derived_points:
+        # Constructed points join the room before anything else is layered on,
+        # so a ring, a line or an opening can be built through them. They are
+        # flagged, so nothing downstream mistakes one for a measurement, and
+        # they are placed by the same outline_order / role_overrides the
+        # operator uses for any other point rather than by re-classifying.
+        from .model import Point, Role
+        have = {p.name for p in room.points}
+        for i, d in enumerate(ov.derived_points):
+            if d.get("name") in have:
+                continue
+            try:
+                role = Role(d.get("role", "floor"))
+            except ValueError:
+                role = Role.FLOOR
+            room.points.append(Point(
+                name=d["name"], x=float(d["x"]), y=float(d["y"]),
+                z=float(d.get("z", room.floor_z or 0.0)), layer="", role=role,
+                index=10_000 + i, derived=True,
+                source=str(d.get("from", "constructed"))))
     if ov.dropped_points:
         # A deleted point leaves the room entirely, and every line that touched
         # it goes with it. Nothing on disk is changed.
@@ -99,6 +121,16 @@ def _apply_overrides(pid: str, room: Room) -> Room:
         room.issues = [i for i in room.issues if i.code != "no-ceiling"]
     if ov.wall_thickness is not None:
         room.wall_thickness = ov.wall_thickness
+    if ov.opening_kind_overrides:
+        # Correcting a door read as a window, or the other way round. Matched
+        # on the jamb points the opening was built from, so the correction
+        # follows the opening rather than its position in the list.
+        from .elements import opening_key
+        from .model import OPENING_KINDS
+        for o in room.openings:
+            kind = ov.opening_kind_overrides.get(opening_key(o))
+            if kind in OPENING_KINDS:
+                o.kind = kind
     if ov.disabled_openings:
         room.openings = [o for i, o in enumerate(room.openings)
                          if i not in set(ov.disabled_openings)]
@@ -124,6 +156,21 @@ def _panoramas(folder: str, room: str) -> list[Path]:
                   if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png"))
 
 
+def _crossings_json(room: Room) -> list[dict]:
+    """Every place two of the room's drawn lines cross."""
+    from .geometry import crossings
+
+    by_name = {p.name: p for p in room.points}
+    segs, names = [], []
+    for a, b in room.segments:
+        if a in by_name and b in by_name:
+            segs.append((by_name[a].xy, by_name[b].xy))
+            names.append((a, b))
+    return [{"at": [round(x, 2), round(y, 2)],
+             "lines": [list(names[i]), list(names[j])]}
+            for i, j, (x, y) in crossings(segs)]
+
+
 def _room_json(room: Room, ov=None, folder: str = "") -> dict:
     area = polygon_area([p.xy for p in room.outline]) / 10_000 if len(room.outline) > 2 else 0.0
     return {
@@ -140,7 +187,12 @@ def _room_json(room: Room, ov=None, folder: str = "") -> dict:
         "segments": [list(s) for s in room.segments],
         "links": [list(l) for l in room.links],
         "points": [{"name": p.name, "x": p.x, "y": p.y, "z": p.z,
-                    "role": p.role.value, "layer": p.layer} for p in room.points],
+                    "role": p.role.value, "layer": p.layer,
+                    "derived": p.derived, "source": p.source}
+                   for p in room.points],
+        # Where two drawn lines actually cross. The sketch offers each one as a
+        # corner the operator can adopt; nothing is created behind their back.
+        "crossings": _crossings_json(room),
         # Where the instrument stood. One setup per panorama, so this is also
         # where each panorama was shot from.
         "stations": [{"name": s.name, "x": s.x, "y": s.y, "z": s.z}
@@ -149,7 +201,23 @@ def _room_json(room: Room, ov=None, folder: str = "") -> dict:
             "index": i, "kind": o.kind, "width": round(o.width, 1),
             "sill": round(o.sill, 1), "head": round(o.head, 1),
             "left": [o.left.x, o.left.y], "right": [o.right.x, o.right.y],
+            # What this rectangle is keyed on, so the operator's choice of
+            # what it really is survives a rebuild.
+            "key": _opening_key(o), "cuts": o.cuts,
         } for i, o in enumerate(room.openings)],
+        # Everything a wall rectangle is allowed to be. The survey cannot tell
+        # a boiler from a window, so the picker is the answer, not a better
+        # guess.
+        "openingKinds": [{"kind": k, "label": KIND_LABELS.get(k, k)}
+                         for k in OPENING_KINDS],
+        "stairs": [{
+            "points": [p.name for p in s.points],
+            "steps": s.steps, "rise": round(s.rise, 1), "going": round(s.going, 1),
+        } for s in room.stairs],
+        # Everything in this room that can be clicked, named by the survey
+        # points it was built from. These keys outlive a rebuild; face ids do
+        # not, so a remembered decision is keyed on these.
+        "elements": [e.to_dict() for e in room_elements(room)],
         "issues": [{"severity": i.severity, "code": i.code,
                     "message": i.message, "points": i.points} for i in room.issues],
         "status": "needs-you" if room.has_errors else (
@@ -256,11 +324,14 @@ class RoomPatch(BaseModel):
     ceilingHeight: float | None = None
     wallThickness: float | None = None
     disabledOpenings: list[int] | None = None
+    openingKindOverrides: dict[str, str] | None = None
     fixtureOverrides: dict[str, dict] | None = None
     roleOverrides: dict[str, str] | None = None
     addedSegments: list[list[str]] | None = None
     removedSegments: list[list[str]] | None = None
     faceThickness: dict[str, float] | None = None
+    removedWalls: list[str] | None = None       # element keys, e.g. "wall:P_003|P_004"
+    derivedPoints: list[dict] | None = None     # constructed corners: name/x/y/z/role/from
 
 
 @app.patch("/projects/{pid}/rooms/{name}")
@@ -276,6 +347,12 @@ def patch_room(pid: str, name: str, body: RoomPatch):
         ov.wall_thickness = body.wallThickness
     if body.disabledOpenings is not None:
         ov.disabled_openings = body.disabledOpenings
+    if body.openingKindOverrides is not None:
+        ov.opening_kind_overrides = {**ov.opening_kind_overrides, **body.openingKindOverrides}
+    if body.removedWalls is not None:
+        ov.removed_walls = body.removedWalls
+    if body.derivedPoints is not None:
+        ov.derived_points = body.derivedPoints
     if body.fixtureOverrides is not None:
         ov.fixture_overrides = body.fixtureOverrides
     if body.roleOverrides is not None:
@@ -358,8 +435,9 @@ def build(pid: str, name: str):
     try:
         ov = store.get(pid).overrides.get(name)
         shape = _quiet(build_room, room, cfg,
-                       fixture_overrides=ov.fixture_overrides if ov else None)
-        mesh = _quiet(tessellate, shape)
+                       fixture_overrides=ov.fixture_overrides if ov else None,
+                       removed_walls=ov.removed_walls if ov else None)
+        mesh = _quiet(tessellate, shape, room=room, cfg=cfg)
         stats = _quiet(solid_stats, shape)
         floor, ceiling = room_planes(room, cfg)
     except BuildError as e:
@@ -387,7 +465,8 @@ def export(pid: str, name: str):
         # Same fixture decisions the preview was built with, so the file on disk
         # is the body that was approved on screen.
         shape = _quiet(build_room, room, cfg,
-                       fixture_overrides=ov_in.fixture_overrides if ov_in else None)
+                       fixture_overrides=ov_in.fixture_overrides if ov_in else None,
+                       removed_walls=ov_in.removed_walls if ov_in else None)
         path = _quiet(export_step, shape, out / f"{name}.step", cfg.step_schema)
     except BuildError as e:
         raise HTTPException(422, str(e))
@@ -402,7 +481,8 @@ def export(pid: str, name: str):
 @app.post("/projects/{pid}/rooms/{name}/export-wall")
 def export_wall(pid: str, name: str, faceId: int):
     """Export the wall under a picked face as its own STEP body."""
-    from .solid import wall_body, wall_index_at
+    from .elements import wall_edge_for_key
+    from .solid import wall_body
 
     proj = store.get(pid)
     room = _room(pid, name)
@@ -411,15 +491,24 @@ def export_wall(pid: str, name: str, faceId: int):
     fx = ov.fixture_overrides if ov else None
 
     try:
-        shape = _quiet(build_room, room, cfg, fixture_overrides=fx)
-        mesh = _quiet(tessellate, shape)
+        # Same body the preview and /export produce, removed walls included -
+        # otherwise this endpoint exports a wall out of a room nobody built.
+        shape = _quiet(build_room, room, cfg, fixture_overrides=fx,
+                       removed_walls=ov.removed_walls if ov else None)
+        mesh = _quiet(tessellate, shape, room=room, cfg=cfg)
         face = next((f for f in mesh.faces if f.id == faceId), None)
         if face is None:
             raise HTTPException(404, f"No face {faceId}")
-        if face.role != "wall":
-            raise HTTPException(400, "That face is a floor or ceiling, not a wall.")
+        # Asking which wall a face belongs to used to mean projecting its
+        # centroid onto the ring, which cheerfully answered "wall 4" for a
+        # stair riser or a door reveal and exported the wrong body.
+        if face.element_kind != "wall":
+            raise HTTPException(
+                400, f"That face is {face.label or face.element_kind}, not a wall.")
 
-        edge = wall_index_at(room, face.centroid[0], face.centroid[1])
+        edge = wall_edge_for_key(room, face.element)
+        if edge is None:
+            raise HTTPException(404, f"{face.label} is no longer in the outline")
         body, length, pieces = _quiet(wall_body, room, cfg, edge, fx)
         stats = _quiet(solid_stats, body)
         out = Path(proj.folder) / "Snapir STEP" / "Walls"
