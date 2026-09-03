@@ -63,7 +63,8 @@ std::pair<Plane, Plane> room_planes(const Room& room, const BuildSettings& cfg);
 // Build one room shell.
 TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
                         const std::vector<Opening>* openings = nullptr,
-                        const FixtureOverrides* fixture_overrides = nullptr);
+                        const FixtureOverrides* fixture_overrides = nullptr,
+                        const std::vector<std::string>* removed_walls = nullptr);
 
 // Face and volume report, used to prove a body is what we think it is.
 SolidStats solid_stats(const TopoDS_Shape& shape);

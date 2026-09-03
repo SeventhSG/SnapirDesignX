@@ -95,11 +95,14 @@ Json to_json(const RoomOverride& ov) {
   put_opt(j, "wall_thickness", ov.wall_thickness);
   j["face_thickness"] = ov.face_thickness;
   j["disabled_openings"] = ov.disabled_openings;
+  j["opening_kind_overrides"] = ov.opening_kind_overrides;
   j["fixture_overrides"] = ov.fixture_overrides;
   j["role_overrides"] = ov.role_overrides;
   j["added_segments"] = ov.added_segments;
   j["removed_segments"] = ov.removed_segments;
   j["added_openings"] = ov.added_openings;
+  j["derived_points"] = ov.derived_points;
+  j["removed_walls"] = ov.removed_walls;
   put_opt(j, "built_at", ov.built_at);
   put_opt(j, "step_path", ov.step_path);
   return j;
@@ -113,6 +116,8 @@ RoomOverride override_from_json(const Json& j) {
   ov.wall_thickness = get_opt<double>(j, "wall_thickness");
   ov.face_thickness = get_or(j, "face_thickness", std::map<std::string, double>{});
   ov.disabled_openings = get_or(j, "disabled_openings", std::vector<int>{});
+  ov.opening_kind_overrides =
+      get_or(j, "opening_kind_overrides", std::map<std::string, std::string>{});
   ov.fixture_overrides = get_or(j, "fixture_overrides", std::map<std::string, Json>{});
   ov.role_overrides = get_or(j, "role_overrides", std::map<std::string, std::string>{});
   ov.added_segments =
@@ -120,6 +125,8 @@ RoomOverride override_from_json(const Json& j) {
   ov.removed_segments =
       get_or(j, "removed_segments", std::vector<std::vector<std::string>>{});
   ov.added_openings = get_or(j, "added_openings", std::vector<Json>{});
+  ov.derived_points = get_or(j, "derived_points", std::vector<Json>{});
+  ov.removed_walls = get_or(j, "removed_walls", std::vector<std::string>{});
   ov.built_at = get_opt<std::string>(j, "built_at");
   ov.step_path = get_opt<std::string>(j, "step_path");
   return ov;

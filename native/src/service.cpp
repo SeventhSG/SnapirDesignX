@@ -35,6 +35,7 @@
 #include <Message_PrinterOStream.hxx>
 #include "snapir/archive.hpp"
 #include "snapir/designx.hpp"
+#include "snapir/elements.hpp"
 #include "snapir/service.hpp"
 #include "snapir/geometry.hpp"
 #include "snapir/parser.hpp"
@@ -48,7 +49,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.0";
+constexpr const char* kVersion = "1.3.1";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -156,6 +157,12 @@ Json settings_to_json(const BuildSettings& c) {
               {"confirm_openings_per_room", c.confirm_openings_per_room},
               {"door_sill_max", c.door_sill_max},
               {"include_fixtures", c.include_fixtures},
+              {"include_stairs", c.include_stairs},
+              {"stair_width", c.stair_width},
+              {"include_fittings", c.include_fittings},
+              {"boiler_depth", c.boiler_depth},
+              {"lamp_depth", c.lamp_depth},
+              {"panel_depth", c.panel_depth},
               {"socket_mode", c.socket_mode},
               {"socket_width", c.socket_width},
               {"socket_height", c.socket_height},
@@ -193,6 +200,12 @@ void apply_settings_json(BuildSettings& c, const Json& j) {
   flag("confirm_openings_per_room", c.confirm_openings_per_room);
   num("door_sill_max", c.door_sill_max);
   flag("include_fixtures", c.include_fixtures);
+  flag("include_stairs", c.include_stairs);
+  num("stair_width", c.stair_width);
+  flag("include_fittings", c.include_fittings);
+  num("boiler_depth", c.boiler_depth);
+  num("lamp_depth", c.lamp_depth);
+  num("panel_depth", c.panel_depth);
   str("socket_mode", c.socket_mode);
   num("socket_width", c.socket_width);
   num("socket_height", c.socket_height);
@@ -272,11 +285,49 @@ FixtureOverrides to_fixture_overrides(const RoomOverride* ov) {
   return out;
 }
 
+// The walls this room is not to build, or nothing at all. Returned by pointer
+// so every endpoint builds the same body: a wall removed in the preview has to
+// be removed in the export and in the single-wall export too.
+const std::vector<std::string>* removed_walls_for(Store& store,
+                                                  const std::string& pid,
+                                                  const std::string& name) {
+  const RoomOverride* ov = store.override_if_any(pid, name);
+  if (!ov || ov->removed_walls.empty()) return nullptr;
+  return &ov->removed_walls;
+}
+
 // Layer the operator's decisions over the parsed survey.
 Room apply_overrides(const std::string& pid, const Room& parsed) {
   Room room = parsed;
   const RoomOverride* ov = g_store->override_if_any(pid, room.name);
   if (!ov) return room;
+
+  if (!ov->derived_points.empty()) {
+    // Constructed points join the room before anything else is layered on, so a
+    // ring, a line or an opening can be built through them. They are flagged,
+    // so nothing downstream mistakes one for a measurement, and they are placed
+    // by the same outline_order / role_overrides the operator uses for any
+    // other point rather than by re-classifying.
+    std::set<std::string> have;
+    for (const auto& p : room.points) have.insert(p.name);
+    for (size_t i = 0; i < ov->derived_points.size(); ++i) {
+      const Json& d = ov->derived_points[i];
+      if (!d.is_object()) continue;
+      const std::string name = d.value("name", std::string());
+      if (name.empty() || have.count(name)) continue;
+      Point p;
+      p.name = name;
+      p.x = d.value("x", 0.0);
+      p.y = d.value("y", 0.0);
+      p.z = d.value("z", room.floor_z ? *room.floor_z : 0.0);
+      const std::string role = d.value("role", std::string());
+      p.role = role.empty() ? Role::Floor : role_from_string(role);
+      p.index = 10000 + static_cast<int>(i);
+      p.derived = true;
+      p.source = d.value("from", std::string("constructed"));
+      room.points.push_back(p);
+    }
+  }
 
   if (!ov->dropped_points.empty()) {
     // A deleted point leaves the room entirely, and every line that touched it
@@ -352,6 +403,20 @@ Room apply_overrides(const std::string& pid, const Room& parsed) {
 
   if (ov->wall_thickness) room.wall_thickness = ov->wall_thickness;
 
+  if (!ov->opening_kind_overrides.empty()) {
+    // Correcting a door read as a window, or a boiler read as either. Matched
+    // on the jamb points the opening was built from, so the correction follows
+    // the opening rather than its position in the list. Runs before the
+    // disabled filter, so both are indexed against the same list.
+    const auto& allowed = opening_kinds();
+    for (auto& o : room.openings) {
+      const auto it = ov->opening_kind_overrides.find(opening_key(o));
+      if (it == ov->opening_kind_overrides.end()) continue;
+      if (std::find(allowed.begin(), allowed.end(), it->second) != allowed.end())
+        o.kind = it->second;
+    }
+  }
+
   if (!ov->disabled_openings.empty()) {
     const std::set<int> off(ov->disabled_openings.begin(), ov->disabled_openings.end());
     std::vector<Opening> keep;
@@ -413,7 +478,9 @@ Json room_json(const Room& room, const RoomOverride* ov,
                           {"y", p.y},
                           {"z", p.z},
                           {"role", to_string(p.role)},
-                          {"layer", p.layer}});
+                          {"layer", p.layer},
+                          {"derived", p.derived},
+                          {"source", p.source}});
   j["points"] = points;
 
   // Where the instrument stood. One setup per panorama, so this is also where
@@ -433,9 +500,67 @@ Json room_json(const Room& room, const RoomOverride* ov,
                             {"sill", round_to(o.sill(), 1)},
                             {"head", round_to(o.head(), 1)},
                             {"left", Json::array({o.left.x, o.left.y})},
-                            {"right", Json::array({o.right.x, o.right.y})}});
+                            {"right", Json::array({o.right.x, o.right.y})},
+                            // What this rectangle is keyed on, so the
+                            // operator's choice of what it really is survives a
+                            // rebuild.
+                            {"key", opening_key(o)},
+                            {"cuts", o.cuts()}});
   }
   j["openings"] = openings;
+
+  // Everything a wall rectangle is allowed to be. The survey cannot tell a
+  // boiler from a window, so the picker is the answer, not a better guess.
+  Json kinds = Json::array();
+  for (const auto& k : opening_kinds())
+    kinds.push_back(Json{{"kind", k}, {"label", kind_label(k)}});
+  j["openingKinds"] = kinds;
+
+  Json stairs = Json::array();
+  for (const auto& s : room.stairs) {
+    std::vector<std::string> names;
+    for (const auto& p : s.points) names.push_back(p.name);
+    stairs.push_back(Json{{"points", names},
+                          {"steps", s.steps},
+                          {"rise", round_to(s.rise(), 1)},
+                          {"going", round_to(s.going(), 1)}});
+  }
+  j["stairs"] = stairs;
+
+  // Everything in this room that can be clicked, named by the survey points it
+  // was built from. These keys outlive a rebuild; face ids do not, so a
+  // remembered decision is keyed on these.
+  Json els = Json::array();
+  for (const auto& e : elements(room)) {
+    Json one{{"kind", e.kind}, {"key", e.key}, {"label", e.label},
+             {"points", e.points}};
+    if (e.index) one["index"] = *e.index;
+    else one["index"] = nullptr;
+    els.push_back(one);
+  }
+  j["elements"] = els;
+
+  // Where two drawn lines cross. The sketch offers each one as a corner the
+  // operator can adopt; nothing is created behind their back.
+  std::map<std::string, const Point*> by_name;
+  for (const auto& p : room.points) by_name[p.name] = &p;
+  std::vector<std::pair<Pt, Pt>> segs_xy;
+  std::vector<std::pair<std::string, std::string>> seg_names;
+  for (const auto& s : room.segments) {
+    const auto a = by_name.find(s.first), b = by_name.find(s.second);
+    if (a == by_name.end() || b == by_name.end()) continue;
+    segs_xy.push_back({{a->second->x, a->second->y}, {b->second->x, b->second->y}});
+    seg_names.push_back(s);
+  }
+  Json cross = Json::array();
+  for (const auto& c : crossings(segs_xy))
+    cross.push_back(
+        Json{{"at", Json::array({round_to(c.at.x, 2), round_to(c.at.y, 2)})},
+             {"lines", Json::array({Json::array({seg_names[c.i].first,
+                                                 seg_names[c.i].second}),
+                                    Json::array({seg_names[c.j].first,
+                                                 seg_names[c.j].second})})}});
+  j["crossings"] = cross;
 
   Json issues = Json::array();
   for (const auto& i : room.issues)
@@ -466,7 +591,13 @@ Json mesh_json(const Mesh& mesh) {
              {"centroid",
               Json::array({round_to(f.centroid[0], 4), round_to(f.centroid[1], 4),
                            round_to(f.centroid[2], 4)})},
-             {"role", f.role}});
+             {"role", f.role},
+             // Which element this face belongs to. `id` is an OCCT ordinal and
+             // only means anything for this one build; `element` survives a
+             // rebuild, so it is what the UI keys a decision on.
+             {"element", f.element},
+             {"elementKind", f.element_kind},
+             {"label", f.label}});
   return Json{{"positions", mesh.positions},
               {"normals", mesh.normals},
               {"faceIds", mesh.face_ids},
@@ -759,6 +890,16 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                 if (b.contains("faceThickness") && !b["faceThickness"].is_null())
                   for (const auto& kv : b["faceThickness"].items())
                     ov.face_thickness[kv.key()] = kv.value().get<double>();
+                // Merged, not replaced - the UI sends one rectangle at a time,
+                // the same way it sends one role at a time.
+                if (b.contains("openingKindOverrides") &&
+                    !b["openingKindOverrides"].is_null())
+                  for (const auto& kv : b["openingKindOverrides"].items())
+                    ov.opening_kind_overrides[kv.key()] = kv.value().get<std::string>();
+                if (b.contains("removedWalls") && !b["removedWalls"].is_null())
+                  ov.removed_walls = b["removedWalls"].get<std::vector<std::string>>();
+                if (b.contains("derivedPoints") && !b["derivedPoints"].is_null())
+                  ov.derived_points = b["derivedPoints"].get<std::vector<Json>>();
 
                 store.save();
                 g_rooms.erase(pid);  // force a clean re-parse
@@ -894,8 +1035,10 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const FixtureOverrides fx =
                    to_fixture_overrides(store.override_if_any(pid, name));
 
-               const TopoDS_Shape shape = build_room(room, cfg, nullptr, &fx);
-               const Mesh mesh = tessellate(shape);
+               const std::vector<std::string>* rm = removed_walls_for(store, pid, name);
+               const TopoDS_Shape shape = build_room(room, cfg, nullptr, &fx, rm);
+               Mesh mesh = tessellate(shape);
+               name_faces(mesh, room, cfg);
                const SolidStats stats = solid_stats(shape);
                const auto planes = room_planes(room, cfg);
 
@@ -932,7 +1075,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                // on disk is the body that was approved on screen.
                const FixtureOverrides fx =
                    to_fixture_overrides(store.override_if_any(pid, name));
-               const TopoDS_Shape shape = build_room(room, cfg, nullptr, &fx);
+               const TopoDS_Shape shape = build_room(
+                   room, cfg, nullptr, &fx, removed_walls_for(store, pid, name));
                const std::string path = export_shape(
                    shape, (out / fs::u8path(name)).u8string(), fmt, schema,
                    &room, &cfg, &fx);
@@ -966,8 +1110,10 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const FixtureOverrides fx =
                    to_fixture_overrides(store.override_if_any(pid, name));
 
-               const TopoDS_Shape shape = build_room(room, cfg, nullptr, &fx);
-               const Mesh mesh = tessellate(shape);
+               const TopoDS_Shape shape = build_room(
+                   room, cfg, nullptr, &fx, removed_walls_for(store, pid, name));
+               Mesh mesh = tessellate(shape);
+               name_faces(mesh, room, cfg);
                const FaceInfo* face = nullptr;
                for (const auto& f : mesh.faces)
                  if (f.id == face_id) { face = &f; break; }

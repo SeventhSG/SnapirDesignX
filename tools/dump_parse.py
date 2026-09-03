@@ -10,6 +10,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# The C++ side writes UTF-8. Windows hands Python a cp1252 stdout by default,
+# which cannot encode the dotted capital in the instrument's own name and kills
+# the dump before it prints anything - so the two halves could not be compared
+# at all on the machine the port is developed on.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from snapir.geometry import perimeter, polygon_area, signed_area
 from snapir.parser import read_project
 
@@ -58,6 +65,18 @@ def main(folder: str) -> None:
             emit(f"opening[{i}]",
                  f"{o.kind} w={num(o.width)} sill={num(o.sill)} head={num(o.head)} "
                  f"L={num(o.left.x)},{num(o.left.y)} R={num(o.right.x)},{num(o.right.y)}")
+        # Flights and skirtings, spelled out rather than counted. Two cores can
+        # tag the same points and still split them into different flights, and
+        # a bare count would compare equal while the geometry differed.
+        emit("n_stairs", len(r.stairs))
+        for i, s in enumerate(r.stairs):
+            emit(f"stair[{i}]",
+                 f"{s.kind} steps={s.steps} rise={num(s.rise)} going={num(s.going)} "
+                 f"pts={','.join(p.name for p in s.points)}")
+        emit("n_pervaz", len(r.pervaz))
+        for i, v in enumerate(r.pervaz):
+            emit(f"pervaz[{i}]",
+                 f"{v.corner.name}+{v.wall.name} h={num(v.height)} d={num(v.depth)}")
         for i, s in enumerate(r.issues):
             emit(f"issue[{i}]", f"{s.severity} {s.code}")
         for p in r.points:

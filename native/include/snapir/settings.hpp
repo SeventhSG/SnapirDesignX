@@ -30,6 +30,18 @@ struct BuildSettings {
   // anchored to the wall it belongs to, never left floating.
   bool include_fixtures = true;
 
+  // Stairs. Only the nosing line is shot, so the flight is given a width rather
+  // than measured across - there is nothing else to derive it from.
+  bool include_stairs = true;
+  double stair_width = 900.0;  // mm
+
+  // Wall fittings. The survey gives the rectangle on the wall; how far the
+  // thing stands out of it is not measured, so it comes from here.
+  bool include_fittings = true;
+  double boiler_depth = 400.0;  // mm; a tank, drawn round
+  double lamp_depth = 120.0;    // mm
+  double panel_depth = 40.0;    // mm, a socket or switch plate
+
   // "box" adds a back box standing proud of the wall.
   // "hole" cuts a recess into the wall instead.
   std::string socket_mode = "box";

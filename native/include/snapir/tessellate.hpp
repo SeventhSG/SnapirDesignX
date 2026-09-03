@@ -11,6 +11,9 @@
 
 #include <TopoDS_Shape.hxx>
 
+#include "snapir/model.hpp"
+#include "snapir/settings.hpp"
+
 namespace snapir {
 
 inline constexpr double kMmToM = 0.001;
@@ -22,6 +25,12 @@ struct FaceInfo {
   std::array<double, 3> normal{};
   std::array<double, 3> centroid{};
   std::string role = "wall";  // "floor" | "ceiling" | "wall" | "reveal"
+  // Which element of the room this face belongs to. `id` above is an OCCT
+  // ordinal and is only good for this one build; `element` survives a rebuild,
+  // so it is what a remembered decision is keyed on.
+  std::string element;       // e.g. "wall:P_003|P_004"
+  std::string element_kind;  // wall|floor|ceiling|opening|fitting|fixture|stairs|pervaz
+  std::string label;         // e.g. "Wall 3 of 11"
 };
 
 // Flat-shaded, non-indexed. Three vertices per triangle.
@@ -41,5 +50,9 @@ struct Mesh {
 // triangles regardless of the setting.
 Mesh tessellate(const TopoDS_Shape& shape, double deflection = 1.0,
                 double angular = 0.3);
+
+// Attribute every meshed face back to the element it was built from. Without
+// this the mesh still draws, it just cannot say what anything is.
+void name_faces(Mesh& mesh, const Room& room, const BuildSettings& cfg);
 
 }  // namespace snapir

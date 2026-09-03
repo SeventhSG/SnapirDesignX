@@ -1,5 +1,7 @@
 #include "snapir/solid.hpp"
 
+#include "snapir/elements.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -210,6 +212,109 @@ TopoDS_Shape opening_cutter(const Opening& op, const std::vector<Pt>& ring,
       {ax + nx * reach, ay + ny * reach},
   };
   return prism(corners, level_plane(op.sill()), level_plane(op.head()));
+}
+
+// A synthetic opening spanning the whole edge, floor to ceiling.
+//
+// Reuses the opening cutter rather than re-deriving a variable-thickness offset
+// ring: cutting the entire wall out is exactly what an opening the width of the
+// wall already does.
+TopoDS_Shape removed_wall_opening(const std::vector<Pt>& ring, const Plane& floor,
+                                  const Plane& ceiling, int i,
+                                  const BuildSettings& cfg) {
+  const Pt& a = ring[i];
+  const Pt& b = ring[(i + 1) % ring.size()];
+  Opening op;
+  op.left = {a.x, a.y, floor.z_at(a.x, a.y), ceiling.z_at(a.x, a.y), {}};
+  op.right = {b.x, b.y, floor.z_at(b.x, b.y), ceiling.z_at(b.x, b.y), {}};
+  op.kind = "removed";
+  return opening_cutter(op, ring, cfg);
+}
+
+// The solid a wall rectangle stands up as, when it is not a hole.
+//
+// All of them are seated on the wall the rectangle was shot on and grow inward
+// from it, so the surveyed face stays where the instrument put it - the same
+// rule the walls themselves follow. Depth is not in the survey; it comes from
+// settings, per kind.
+TopoDS_Shape fitting_body(const Opening& op, const std::vector<Pt>& ring,
+                          const BuildSettings& cfg) {
+  const double cx = (op.left.x + op.right.x) / 2;
+  const double cy = (op.left.y + op.right.y) / 2;
+  const WallFrame w = wall_frame(cx, cy, ring);
+
+  const double depth = op.kind == "boiler"  ? cm(cfg.boiler_depth)
+                       : op.kind == "lamp"  ? cm(cfg.lamp_depth)
+                                            : cm(cfg.panel_depth);
+  // Every fitting reaches a little way into the wall. Sitting exactly on the
+  // surface looks right and fuses badly: a round tank touching a flat wall
+  // meets it along a single line, and the kernel hands back two solids that
+  // merely happen to touch instead of one body.
+  const double bite = cm(cfg.socket_embed);
+
+  if (op.kind == "boiler") {
+    // A tank: round, upright, its back in the wall.
+    const double radius = std::min(depth, std::max(op.width(), 1.0) / 2);
+    const double reach = std::max(radius - std::min(bite, radius / 2), 0.1);
+    const gp_Pnt base((w.seat.x + w.normal.x * reach) * kCmToMm,
+                      (w.seat.y + w.normal.y * reach) * kCmToMm,
+                      op.sill() * kCmToMm);
+    const gp_Ax2 axis(base, gp_Dir(0.0, 0.0, 1.0));
+    return BRepPrimAPI_MakeCylinder(axis, radius * kCmToMm,
+                                    std::max(op.height(), 1.0) * kCmToMm)
+        .Shape();
+  }
+
+  const double half = std::max(op.width(), 1.0) / 2;
+  const double back = -bite, front = depth;
+  const std::vector<Pt> corners = {
+      {w.seat.x + w.tangent.x * half + w.normal.x * back,
+       w.seat.y + w.tangent.y * half + w.normal.y * back},
+      {w.seat.x - w.tangent.x * half + w.normal.x * back,
+       w.seat.y - w.tangent.y * half + w.normal.y * back},
+      {w.seat.x - w.tangent.x * half + w.normal.x * front,
+       w.seat.y - w.tangent.y * half + w.normal.y * front},
+      {w.seat.x + w.tangent.x * half + w.normal.x * front,
+       w.seat.y + w.tangent.y * half + w.normal.y * front},
+  };
+  return prism(corners, level_plane(op.sill()), level_plane(op.head()));
+}
+
+// One box per step, stacked from the floor up to that step's height.
+//
+// Only the nosing line is shot, so each box is centred on the line and given
+// the settings' flight width - there is nothing else in the survey to derive it
+// from. This is the stair as built mass, not the void beneath it.
+std::vector<TopoDS_Shape> stairs_bodies(const Room& room, const BuildSettings& cfg,
+                                        const Plane& floor) {
+  const double width = cm(cfg.stair_width);
+  std::vector<TopoDS_Shape> bodies;
+  for (const auto& stair : room.stairs) {
+    const auto& pts = stair.points;
+    for (size_t i = 0; i + 1 < pts.size(); ++i) {
+      const Point& a = pts[i];
+      const Point& b = pts[i + 1];
+      const double dx = b.x - a.x, dy = b.y - a.y;
+      const double length = std::sqrt(dx * dx + dy * dy);
+      if (length < 1.0) continue;
+      const double tx = dx / length, ty = dy / length;
+      const double nx = ty, ny = -tx;
+      const double hw = width / 2;
+      const std::vector<Pt> corners = {
+          {a.x + nx * hw, a.y + ny * hw},
+          {b.x + nx * hw, b.y + ny * hw},
+          {b.x - nx * hw, b.y - ny * hw},
+          {a.x - nx * hw, a.y - ny * hw},
+      };
+      try {
+        bodies.push_back(prism(corners, level_plane(floor.z_at(a.x, a.y)),
+                               level_plane(std::max(a.z, b.z))));
+      } catch (const std::exception&) {
+        continue;
+      }
+    }
+  }
+  return bodies;
 }
 
 struct FixtureBuild {
@@ -499,7 +604,8 @@ std::vector<Fixture> fixtures(const Room& room, const std::vector<Pt>& ring,
 
 TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
                         const std::vector<Opening>* openings,
-                        const FixtureOverrides* fixture_overrides) {
+                        const FixtureOverrides* fixture_overrides,
+                        const std::vector<std::string>* removed_walls) {
   if (room.outline.size() < 3)
     throw BuildError(room.name + ": outline has fewer than three points");
 
@@ -528,13 +634,56 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
   if (!cut.IsDone()) throw BuildError(room.name + ": could not subtract the room volume");
   TopoDS_Shape shape = cut.Shape();
 
+  // A wall the operator marked as not really there is cut the same way a
+  // doorway is: full height, corner to corner, through the whole edge. The key
+  // names its two corners, so a wall that no longer exists in the ring (its
+  // corner was dropped, or the ring redrawn) is skipped rather than taking a
+  // different wall down with it.
+  if (removed_walls) {
+    std::vector<std::string> keys = *removed_walls;
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    for (const auto& key : keys) {
+      const auto edge = wall_edge_for_key(room, key);
+      if (!edge) continue;
+      BRepAlgoAPI_Cut c(shape, removed_wall_opening(inner_ring, floor, ceiling,
+                                                    *edge, cfg));
+      c.Build();
+      if (!c.IsDone())
+        throw BuildError(room.name + ": could not remove wall " +
+                         std::to_string(*edge + 1));
+      shape = c.Shape();
+    }
+  }
+
+  const std::vector<Opening>& rects = openings ? *openings : room.openings;
+
   if (cfg.cut_openings) {
-    const std::vector<Opening>& list = openings ? *openings : room.openings;
-    for (const auto& op : list) {
+    // Only the rectangles that are actually holes. A boiler or a socket panel
+    // is the same four corners in the survey and must not be cut through.
+    for (const auto& op : rects) {
+      if (!op.cuts()) continue;
       BRepAlgoAPI_Cut c(shape, opening_cutter(op, inner_ring, cfg));
       c.Build();
       if (!c.IsDone()) throw BuildError(room.name + ": opening cut failed");
       shape = c.Shape();
+    }
+  }
+
+  if (cfg.include_fittings) {
+    for (const auto& op : rects) {
+      if (op.cuts() || op.kind == "empty") continue;
+      TopoDS_Shape body;
+      try {
+        body = fitting_body(op, inner_ring, cfg);
+      } catch (const std::exception&) {
+        continue;
+      }
+      BRepAlgoAPI_Fuse f(shape, body);
+      f.Build();
+      if (!f.IsDone())
+        throw BuildError(room.name + ": could not place the " + op.kind);
+      shape = f.Shape();
     }
   }
 
@@ -547,6 +696,19 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
                                  " service point(s) did not meet any wall and were "
                                  "left out of the body.",
                              stray});
+  }
+
+  if (cfg.include_stairs && !room.stairs.empty()) {
+    int step = 0;
+    for (const auto& body : stairs_bodies(room, cfg, floor)) {
+      ++step;
+      BRepAlgoAPI_Fuse f(shape, body);
+      f.Build();
+      if (!f.IsDone())
+        throw BuildError(room.name + ": could not fuse stair step " +
+                         std::to_string(step));
+      shape = f.Shape();
+    }
   }
 
   if (!BRepCheck_Analyzer(shape).IsValid())

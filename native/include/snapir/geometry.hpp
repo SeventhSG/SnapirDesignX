@@ -1,6 +1,7 @@
 // Plane geometry helpers. No CAD kernel here, so this stays link-cheap and
 // testable on its own.
 #pragma once
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -32,5 +33,25 @@ struct Projection { int edge; Pt point; double distance; };
 Projection project_onto_edges(const Pt& pt, const std::vector<Pt>& ring);
 
 double dist(const Pt& a, const Pt& b);
+
+// Where the infinite lines through a-b and c-d meet.
+//
+// Infinite, not segment-bounded, because the useful case is two wall runs that
+// stop short of the corner they imply: the corner nobody could stand in is
+// exactly the one worth constructing. Empty when they are parallel, or as near
+// parallel as makes no difference.
+std::optional<Pt> line_intersection(const Pt& a, const Pt& b, const Pt& c,
+                                    const Pt& d);
+
+// Push b further from a, along their own direction.
+Pt extend(const Pt& a, const Pt& b, double distance);
+
+// Every pair of segments that actually cross, and where. Shared endpoints do
+// not count: two walls meeting at a surveyed corner are already joined, and
+// reporting that as a crossing would turn every corner of every room into a
+// discovery.
+struct Crossing { int i; int j; Pt at; };
+std::vector<Crossing> crossings(
+    const std::vector<std::pair<Pt, Pt>>& segments);
 
 }  // namespace snapir

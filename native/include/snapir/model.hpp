@@ -16,6 +16,8 @@ enum class Role {
   Plumbing,  // Su tesisat
   Control,   // VTARGET ArUco reference marker
   Station,   // instrument position
+  Stairs,    // one shot of a climbed flight
+  Pervaz,    // the wall shot of a skirting pair
   Unknown,   // needs a human decision
 };
 
@@ -28,6 +30,15 @@ struct Point {
   std::string layer;
   Role role = Role::Unknown;
   int index = 0;  // shot order, parsed from P_nnn
+  // Constructed by the operator - a line run out to where it should reach, or
+  // the crossing of two runs - rather than measured by the instrument. Never
+  // written back to the survey, and never silently mistaken for a shot.
+  bool derived = false;
+  std::string source;  // how it was constructed, for the provenance list
+  // The operator said what this point is. Inference must leave it alone -
+  // otherwise the next rebuild quietly re-derives the very thing they just
+  // corrected, and their decision looks like it never took.
+  bool pinned = false;
 };
 
 // One vertical edge of an opening: a cluster of points sharing an XY.
@@ -37,13 +48,31 @@ struct Jamb {
   std::vector<Point> points;
 };
 
-// A door or window, defined by two jambs on the same wall.
+// What a rectangle surveyed on a wall turns out to be.
+//
+// The survey cannot tell these apart: a boiler, a window and a switch panel
+// are all four corners on a wall. Only the operator knows, so the classifier
+// guesses a door or a window from the sill height and the rest are theirs to
+// set. Doors and windows are cut through the wall; the others are fittings
+// that hang on it and stand out into the room.
+bool kind_cuts(const std::string& kind);
+const std::vector<std::string>& opening_kinds();
+std::string kind_label(const std::string& kind);
+
+// A rectangle on a wall: two jambs, a sill and a head.
+//
+// Doors and windows are holes. A boiler, a socket panel or a wall lamp is the
+// same rectangle in the survey and a solid standing in the room, so what gets
+// built is decided by `kind`, not by the shape.
 struct Opening {
   Jamb left, right;
-  std::string kind = "unknown";  // "door" | "window", inferred or set by the user
+  std::string kind = "unknown";  // one of opening_kinds(), inferred or set by the user
 
   double sill() const { return std::min(left.z_bottom, right.z_bottom); }
   double head() const { return std::max(left.z_top, right.z_top); }
+  double height() const { return head() - sill(); }
+  // True when this rectangle is a hole rather than a fitting.
+  bool cuts() const { return kind_cuts(kind); }
   double width() const {
     const double dx = left.x - right.x, dy = left.y - right.y;
     return std::sqrt(dx * dx + dy * dy);
@@ -52,6 +81,48 @@ struct Opening {
     kind = sill() <= door_sill_max ? "door" : "window";
     return kind;
   }
+};
+
+// A flight climbed in survey order.
+//
+// Nothing pairs left and right edges here the way a jamb does - the surveyor
+// walks up shooting one line, so a flight is just that line, in order. It is
+// traced either at the nosings, one shot per step, or as the zigzag where the
+// steps meet the wall, corner by corner. Two shots make up one step in the
+// second case, so the step count cannot be read off the point count.
+struct Stair {
+  std::vector<Point> points;
+  std::string kind = "nosings";  // "nosings" | "zigzag"
+  int steps = 0;                 // risers climbed
+
+  double rise() const {
+    return points.size() >= 2
+               ? std::fabs(points.back().z - points.front().z)
+               : 0.0;
+  }
+  double going() const {
+    double total = 0.0;
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+      const double dx = points[i + 1].x - points[i].x;
+      const double dy = points[i + 1].y - points[i].y;
+      total += std::sqrt(dx * dx + dy * dy);
+    }
+    return total;
+  }
+};
+
+// Skirting, shot as a pair at one corner.
+//
+// The surveyor puts one shot on the wall just above the board and one at floor
+// level on its outer face. The diagonal between them is the whole measurement:
+// the rise is the board's height, the plan offset is how far it stands proud of
+// the wall behind it. The floor-level shot keeps the corner, since that is the
+// one that measured the floor. Neither shot is moved.
+struct Pervaz {
+  Point corner;   // the floor-level shot: this is the outline corner
+  Point wall;     // the shot on the wall above the board
+  double height = 0;  // cm
+  double depth = 0;   // cm the board stands proud of the wall
 };
 
 // Something the app cannot decide on its own.
@@ -69,6 +140,8 @@ struct Room {
   std::vector<Point> outline;  // floor polygon, shot order
   std::vector<Point> ceiling;
   std::vector<Opening> openings;
+  std::vector<Stair> stairs;
+  std::vector<Pervaz> pervaz;
   std::vector<Point> controls;
   // A room can be surveyed from several setups, each with its own panorama.
   // Distinct positions only: the instrument is written out again every time it

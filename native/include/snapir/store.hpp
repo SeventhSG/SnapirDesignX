@@ -30,11 +30,22 @@ struct RoomOverride {
   std::optional<double> wall_thickness;   // whole-room override
   std::map<std::string, double> face_thickness;  // edge -> cm
   std::vector<int> disabled_openings;
+  // Keyed by element key ("opening:P_012|P_015"), not by position in the
+  // openings list: that list is rebuilt from scratch on every correction, so an
+  // index silently comes to mean a different opening.
+  std::map<std::string, std::string> opening_kind_overrides;
   std::map<std::string, Json> fixture_overrides;
   std::map<std::string, std::string> role_overrides;  // point -> role
   std::vector<std::vector<std::string>> added_segments;
   std::vector<std::vector<std::string>> removed_segments;
   std::vector<Json> added_openings;
+  // Points the operator constructed rather than measured: a run extended to the
+  // corner it stops short of, or where two runs cross.
+  std::vector<Json> derived_points;
+  // Walls the operator says are not really there, keyed by their corners
+  // ("wall:P_003|P_004"). A corner name outlives a rebuild; an edge index does
+  // not.
+  std::vector<std::string> removed_walls;
   std::optional<std::string> built_at;
   std::optional<std::string> step_path;
 };

@@ -26,6 +26,26 @@ inline constexpr double kMinJambSpan = 40.0;      // a jamb must be taller than 
 inline constexpr double kJambXyTol = 12.0;        // two shots this close are one vertical
 inline constexpr double kStationMergeCm = 5.0;    // re-levelled in place, not a new setup
 
+// A flight climbs at a near-constant riser and tread, shot in survey order as
+// the surveyor walks up. Nothing else in a room survey produces that
+// signature, so it is recognised without asking the operator.
+inline constexpr int kStairMinSteps = 3;         // fewer looks like noise, not a staircase
+inline constexpr double kStairRiserMin = 10.0;
+inline constexpr double kStairRiserMax = 22.0;
+inline constexpr double kStairTreadMin = 15.0;   // plan distance across one tread
+inline constexpr double kStairTreadMax = 40.0;
+inline constexpr double kStairRiserTol = 5.0;    // how much the riser may vary step to step
+inline constexpr int kStairRunGap = 3;           // order gap still counting as one flight
+inline constexpr double kStairFlatTol = 5.0;     // a tread move rises no more than this
+inline constexpr double kStairPlumbTol = 8.0;    // a riser move travels no further in plan
+
+// Pervaz: skirting, shot as two points at one corner. Nothing else in a survey
+// puts two floor shots this close together at two different heights.
+inline constexpr double kPervazDepthMin = 0.3;   // cm the board stands proud
+inline constexpr double kPervazDepthMax = 8.0;
+inline constexpr double kPervazHeightMin = 3.0;
+inline constexpr double kPervazHeightMax = 30.0;
+
 // Parse one room CSV into a classified Room.
 Room read_room(const std::string& path);
 

@@ -25,6 +25,7 @@ set(CORE_SOURCES
   src/planes.cpp
   src/topology.cpp
   src/parser.cpp
+  src/elements.cpp
 )
 
 if(SNAPIR_WITH_OCCT)

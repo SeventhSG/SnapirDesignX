@@ -78,6 +78,26 @@ int main(int argc, char** argv) {
                " head=" + num(o.head()) + " L=" + num(o.left.x) + "," + num(o.left.y) +
                " R=" + num(o.right.x) + "," + num(o.right.y));
     }
+    // Flights and skirtings, spelled out rather than counted. Two cores can tag
+    // the same points and still split them into different flights, and a bare
+    // count would compare equal while the geometry differed.
+    emit(n, "n_stairs", std::to_string(r.stairs.size()));
+    for (size_t i = 0; i < r.stairs.size(); ++i) {
+      const auto& s = r.stairs[i];
+      std::string names;
+      for (size_t k = 0; k < s.points.size(); ++k)
+        names += (k ? "," : "") + s.points[k].name;
+      emit(n, "stair[" + std::to_string(i) + "]",
+           s.kind + " steps=" + std::to_string(s.steps) + " rise=" + num(s.rise()) +
+               " going=" + num(s.going()) + " pts=" + names);
+    }
+    emit(n, "n_pervaz", std::to_string(r.pervaz.size()));
+    for (size_t i = 0; i < r.pervaz.size(); ++i) {
+      const auto& v = r.pervaz[i];
+      emit(n, "pervaz[" + std::to_string(i) + "]",
+           v.corner.name + "+" + v.wall.name + " h=" + num(v.height) +
+               " d=" + num(v.depth));
+    }
     for (size_t i = 0; i < r.issues.size(); ++i)
       emit(n, "issue[" + std::to_string(i) + "]",
            r.issues[i].severity + " " + r.issues[i].code);

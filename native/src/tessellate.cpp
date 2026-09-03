@@ -15,6 +15,8 @@
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 
+#include "snapir/elements.hpp"
+
 namespace snapir {
 namespace {
 
@@ -100,6 +102,17 @@ Mesh tessellate(const TopoDS_Shape& shape, double deflection, double angular) {
   }
 
   return mesh;
+}
+
+void name_faces(Mesh& mesh, const Room& room, const BuildSettings& cfg) {
+  const std::vector<Element> table = elements(room);
+  for (auto& f : mesh.faces) {
+    const auto el = face_element(room, cfg, f.centroid, f.normal, table);
+    if (!el) continue;
+    f.element = el->key;
+    f.element_kind = el->kind;
+    f.label = el->label;
+  }
 }
 
 }  // namespace snapir

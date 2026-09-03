@@ -237,6 +237,179 @@ std::string fmt(double v, int places) {
   return os.str();
 }
 
+// Fold every skirting pair back into a single outline corner.
+//
+// Left alone, both shots are floor corners and the ring doubles: eight corners
+// where the room has four, a two-centimetre zigzag at each one, and a floor
+// plane fitted through two different heights. The room still validates, which
+// is the dangerous part.
+//
+// The pair is recognised by its own geometry - two floor shots a board's-depth
+// apart in plan and a board's-height apart in Z. The floor-level shot keeps the
+// corner, because it is the one that measured the floor; the wall shot leaves
+// the outline and is remembered as the skirting. Nothing is moved.
+void detect_pervaz(Room& room) {
+  // Both roles are candidates, not just Floor: after the first pass one of
+  // every pair is already Pervaz, and a detector that could not see it would
+  // fail to re-pair and drop the board on the next rebuild.
+  std::vector<Point*> floor_pts;
+  for (auto& p : room.points)
+    if (p.role == Role::Floor || p.role == Role::Pervaz) floor_pts.push_back(&p);
+  std::stable_sort(floor_pts.begin(), floor_pts.end(),
+                   [](const Point* a, const Point* b) { return a->index < b->index; });
+
+  std::set<std::string> taken;
+  for (size_t i = 0; i < floor_pts.size(); ++i) {
+    Point* a = floor_pts[i];
+    if (taken.count(a->name) || a->pinned) continue;
+    for (size_t k = i + 1; k < floor_pts.size(); ++k) {
+      Point* b = floor_pts[k];
+      if (taken.count(b->name) || b->pinned) continue;
+      const double dz = std::fabs(a->z - b->z);
+      const double depth = dist2d(*a, *b);
+      if (!(depth >= kPervazDepthMin && depth <= kPervazDepthMax &&
+            dz >= kPervazHeightMin && dz <= kPervazHeightMax))
+        continue;
+      Point* wall = a->z > b->z ? a : b;
+      Point* outer = a->z > b->z ? b : a;
+      Pervaz v;
+      v.corner = *outer;
+      v.wall = *wall;
+      v.height = dz;
+      v.depth = depth;
+      room.pervaz.push_back(v);
+      outer->role = Role::Floor;
+      wall->role = Role::Pervaz;
+      taken.insert(a->name);
+      taken.insert(b->name);
+      break;
+    }
+  }
+}
+
+// What one shot-to-shot move is, if it is part of a flight at all.
+//
+// Two ways a surveyor traces a staircase, and the app must not care which:
+// "nosing" is one shot per step at the front edge, so every move goes forward
+// and up at once; "tread"/"riser" is the zigzag where the steps meet the wall,
+// shot corner by corner, so moves alternate between flat along a tread and
+// straight up a riser. The second is what comes back when only the side wall
+// is shot.
+std::string step_move(const Point& a, const Point& b) {
+  const double dz = b.z - a.z;
+  const double dxy = dist2d(a, b);
+  const bool riser = std::fabs(dz) >= kStairRiserMin && std::fabs(dz) <= kStairRiserMax;
+  const bool tread = dxy >= kStairTreadMin && dxy <= kStairTreadMax;
+  if (riser && tread) return "nosing";
+  if (riser && dxy <= kStairPlumbTol) return "riser";
+  if (tread && std::fabs(dz) <= kStairFlatTol) return "tread";
+  return "";
+}
+
+// Longest coherent flight starting at `start`. Returns one past its last point
+// and how many risers it climbed. A flight is either all nosing moves or a
+// clean alternation of treads and risers - never a mixture, which is what
+// noise looks like.
+std::pair<size_t, int> stair_run(const std::vector<Point*>& pts, size_t start) {
+  std::string mode, prev;
+  bool have_dir = false, climbing = false;
+  bool have_rise = false;
+  double last_rise = 0.0;
+  int risers = 0;
+  size_t j = start;
+  while (j + 1 < pts.size()) {
+    const std::string move = step_move(*pts[j], *pts[j + 1]);
+    if (move.empty()) break;
+    if (mode.empty()) mode = move == "nosing" ? "nosing" : "zigzag";
+    if ((mode == "nosing") != (move == "nosing")) break;
+    if (mode == "zigzag" && move == prev) break;  // two treads or two risers running
+    if (move == "nosing" || move == "riser") {
+      const double dz = pts[j + 1]->z - pts[j]->z;
+      if (!have_dir) {
+        climbing = dz > 0;
+        have_dir = true;
+      } else if ((dz > 0) != climbing) {
+        break;  // a flight does not change its mind
+      }
+      if (have_rise && std::fabs(std::fabs(dz) - last_rise) > kStairRiserTol) break;
+      last_rise = std::fabs(dz);
+      have_rise = true;
+      ++risers;
+    }
+    prev = move;
+    ++j;
+  }
+  return {j > start ? j + 1 : start + 1, risers};
+}
+
+// Tag a stepped run of leftover shots as Role::Stairs.
+//
+// Works in survey order, not plan clusters: a flight advances as it climbs, so
+// its shots never land in the same XY cluster the way a jamb's do. Anything
+// shorter or less regular is left Unknown for the operator to tag by hand.
+void detect_stairs(Room& room) {
+  std::vector<Point*> pts;
+  for (auto& p : room.points)
+    if (p.role == Role::Unknown && !p.pinned) pts.push_back(&p);
+  std::stable_sort(pts.begin(), pts.end(),
+                   [](const Point* a, const Point* b) { return a->index < b->index; });
+
+  size_t i = 0;
+  while (i + 1 < pts.size()) {
+    const auto [end, risers] = stair_run(pts, i);
+    if (risers >= kStairMinSteps) {
+      for (size_t k = i; k < end && k < pts.size(); ++k) pts[k]->role = Role::Stairs;
+      i = end;
+    } else {
+      ++i;
+    }
+  }
+}
+
+// How a tagged flight was shot, and how many risers it climbs.
+std::pair<std::string, int> run_shape(const std::vector<Point>& points) {
+  bool any_nosing = false;
+  int risers = 0;
+  for (size_t i = 0; i + 1 < points.size(); ++i) {
+    const std::string m = step_move(points[i], points[i + 1]);
+    if (m == "nosing") any_nosing = true;
+    if (m == "nosing" || m == "riser") ++risers;
+  }
+  return {any_nosing ? "nosings" : "zigzag", risers};
+}
+
+// Split every Role::Stairs point into flights by survey-order gaps. Covers both
+// the auto-detected run and any points the operator promoted or demoted by hand
+// afterwards - grouping is all that is needed once the role is already decided.
+std::vector<Stair> group_stairs(const Room& room) {
+  std::vector<Point> pts;
+  for (const auto& p : room.points)
+    if (p.role == Role::Stairs) pts.push_back(p);
+  std::stable_sort(pts.begin(), pts.end(),
+                   [](const Point& a, const Point& b) { return a.index < b.index; });
+  if (pts.empty()) return {};
+
+  std::vector<std::vector<Point>> runs{{pts.front()}};
+  for (size_t i = 1; i < pts.size(); ++i) {
+    if (pts[i].index - runs.back().back().index <= kStairRunGap)
+      runs.back().push_back(pts[i]);
+    else
+      runs.push_back({pts[i]});
+  }
+
+  std::vector<Stair> out;
+  for (auto& r : runs) {
+    if (r.size() < 2) continue;
+    const auto [kind, risers] = run_shape(r);
+    Stair s;
+    s.points = r;
+    s.kind = kind;
+    s.steps = risers;
+    out.push_back(s);
+  }
+  return out;
+}
+
 void classify(Room& room);
 
 // Take the room straight from the lines the surveyor drew. Returns false when
@@ -354,6 +527,9 @@ bool from_drawn_lines(Room& room) {
     }
   }
 
+  detect_stairs(room);
+  room.stairs = group_stairs(room);
+
   room.controls.clear();
   for (const auto& p : room.points)
     if (p.role == Role::Control) room.controls.push_back(p);
@@ -396,6 +572,11 @@ void classify(Room& room) {
       tagged.push_back(&p);
     }
   room.outline_source = tagged.empty() ? "inferred" : "surveyed layer";
+
+  // Before anything is clustered or ringed: a skirting pair is two floor shots
+  // at one corner, and both of them landing in the outline is what doubles the
+  // ring.
+  detect_pervaz(room);
 
   // Ceiling shots must be claimed before anything is clustered. A ceiling
   // corner often lands within a few centimetres of a window jamb in plan, and
@@ -458,6 +639,9 @@ void classify(Room& room) {
     op.infer_kind(floor_z + 20.0);
     room.openings.push_back(op);
   }
+
+  detect_stairs(room);
+  room.stairs = group_stairs(room);
 
   room.outline = sorted_by_index(room, Role::Floor);
   room.ceiling = sorted_by_index(room, Role::Ceiling);
@@ -582,6 +766,11 @@ Project read_project(const std::string& folder, const std::string& name) {
 }
 
 void rebuild(Room& room) {
+  // Skirting pairs first: one of the two shots leaves the outline, so this has
+  // to settle before the ring is read off the floor roles.
+  room.pervaz.clear();
+  detect_pervaz(room);
+
   room.outline = sorted_by_index(room, Role::Floor);
   room.ceiling = sorted_by_index(room, Role::Ceiling);
   room.controls.clear();
@@ -615,17 +804,28 @@ void rebuild(Room& room) {
     }
   }
 
+  detect_stairs(room);
+  room.stairs = group_stairs(room);
+
   room.issues.clear();
   validate(room);
 }
 
+// Set point roles by name, then rebuild everything derived from them.
+//
+// A point the operator has named is pinned: the detectors that run during the
+// rebuild skip it, so their guess cannot quietly overwrite the answer they just
+// gave.
 void apply_roles(Room& room, const std::map<std::string, std::string>& roles) {
   static const std::set<std::string> assignable = {
-      "floor", "ceiling", "opening", "socket", "plumbing", "control", "unknown"};
+      "floor", "ceiling", "opening",  "socket",
+      "plumbing", "control", "unknown", "stairs", "pervaz"};
   for (auto& p : room.points) {
     const auto it = roles.find(p.name);
-    if (it != roles.end() && assignable.count(it->second))
+    if (it != roles.end() && assignable.count(it->second)) {
       p.role = role_from_string(it->second);
+      p.pinned = true;
+    }
   }
   rebuild(room);
 }
@@ -636,6 +836,8 @@ void reread_topology(Room& room) {
   room.outline.clear();
   room.ceiling.clear();
   room.openings.clear();
+  room.stairs.clear();
+  room.pervaz.clear();
   room.links.clear();
   room.issues.clear();
   if (!from_drawn_lines(room)) classify(room);

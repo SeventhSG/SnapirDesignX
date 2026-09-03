@@ -102,4 +102,50 @@ Projection project_onto_edges(const Pt& pt, const std::vector<Pt>& ring) {
   return best;
 }
 
+std::optional<Pt> line_intersection(const Pt& a, const Pt& b, const Pt& c,
+                                    const Pt& d) {
+  const double rx = b.x - a.x, ry = b.y - a.y;
+  const double sx = d.x - c.x, sy = d.y - c.y;
+  const double denom = rx * sy - ry * sx;
+  if (std::fabs(denom) < 1e-9) return std::nullopt;
+  const double t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / denom;
+  return Pt{a.x + t * rx, a.y + t * ry};
+}
+
+Pt extend(const Pt& a, const Pt& b, double distance) {
+  const double dx = b.x - a.x, dy = b.y - a.y;
+  const double length = std::sqrt(dx * dx + dy * dy);
+  if (length < 1e-9) return b;
+  return Pt{b.x + dx / length * distance, b.y + dy / length * distance};
+}
+
+namespace {
+bool shares_end(const std::pair<Pt, Pt>& s1, const std::pair<Pt, Pt>& s2,
+                double tol = 0.5) {
+  const Pt a[2] = {s1.first, s1.second};
+  const Pt b[2] = {s2.first, s2.second};
+  for (const Pt& p : a)
+    for (const Pt& q : b)
+      if (dist(p, q) <= tol) return true;
+  return false;
+}
+}  // namespace
+
+std::vector<Crossing> crossings(const std::vector<std::pair<Pt, Pt>>& segments) {
+  std::vector<Crossing> out;
+  const int n = static_cast<int>(segments.size());
+  for (int i = 0; i < n; ++i) {
+    for (int j = i + 1; j < n; ++j) {
+      if (shares_end(segments[i], segments[j])) continue;
+      if (!crosses(segments[i].first, segments[i].second, segments[j].first,
+                   segments[j].second))
+        continue;
+      const auto at = line_intersection(segments[i].first, segments[i].second,
+                                        segments[j].first, segments[j].second);
+      if (at) out.push_back({i, j, *at});
+    }
+  }
+  return out;
+}
+
 }  // namespace snapir

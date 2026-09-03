@@ -12,6 +12,8 @@ const char* to_string(Role r) {
     case Role::Plumbing: return "plumbing";
     case Role::Control: return "control";
     case Role::Station: return "station";
+    case Role::Stairs: return "stairs";
+    case Role::Pervaz: return "pervaz";
     default: return "unknown";
   }
 }
@@ -24,7 +26,33 @@ Role role_from_string(const std::string& s) {
   if (s == "plumbing") return Role::Plumbing;
   if (s == "control") return Role::Control;
   if (s == "station") return Role::Station;
+  if (s == "stairs") return Role::Stairs;
+  if (s == "pervaz") return Role::Pervaz;
   return Role::Unknown;
+}
+
+// Doors and windows are holes; everything else on this list hangs on the wall.
+// "unknown" counts as a hole so a rectangle the operator has not ruled on
+// behaves the way it always did.
+bool kind_cuts(const std::string& kind) {
+  return kind == "door" || kind == "window" || kind == "unknown";
+}
+
+const std::vector<std::string>& opening_kinds() {
+  static const std::vector<std::string> kinds = {
+      "door", "window", "boiler", "socket", "lamp", "panel", "empty"};
+  return kinds;
+}
+
+std::string kind_label(const std::string& kind) {
+  if (kind == "door") return "Door";
+  if (kind == "window") return "Window";
+  if (kind == "boiler") return "Boiler";    // бойлер
+  if (kind == "socket") return "Socket";    // щепсел
+  if (kind == "lamp") return "Wall lamp";   // лампа
+  if (kind == "panel") return "Panel";
+  if (kind == "empty") return "Nothing here";
+  return "Opening";
 }
 
 namespace {
