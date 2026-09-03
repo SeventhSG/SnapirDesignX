@@ -35,6 +35,7 @@ set(SNAPIR_SOURCES
   ${CORE}/src/planes.cpp
   ${CORE}/src/topology.cpp
   ${CORE}/src/parser.cpp
+  ${CORE}/src/elements.cpp
   ${CORE}/src/solid.cpp
   ${CORE}/src/tessellate.cpp
   ${CORE}/src/designx.cpp
