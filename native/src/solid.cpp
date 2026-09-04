@@ -615,7 +615,28 @@ std::vector<Pt> offset_ring(const std::vector<Pt>& raw_ring, double distance) {
   grown.reserve(ring.size());
   for (size_t i = 0; i < ring.size(); ++i) grown.push_back(mitre_vertex(ring, i, distance));
 
-  if (!self_intersections(grown).empty())
+  // Where a feature is narrower than twice the wall - a 37 cm niche with 20 cm
+  // walls - its two sides each offset toward the other and cross, and the
+  // mitred ring folds back on itself. That fold is not an error; it is the
+  // niche filling with wall, which is what the building does. Dissolve each
+  // loop by cutting the ring at the crossing, the way a proper buffer would,
+  // rather than refusing to build the room.
+  for (size_t guard = 0; guard <= grown.size(); ++guard) {
+    const auto crossings = self_intersections(grown);
+    if (crossings.empty()) break;
+    const int i = crossings.front().first;
+    const int j = crossings.front().second;
+    const int n = static_cast<int>(grown.size());
+    const auto at = line_intersection(grown[i], grown[(i + 1) % n], grown[j],
+                                      grown[(j + 1) % n]);
+    if (!at) break;
+    std::vector<Pt> merged(grown.begin(), grown.begin() + i + 1);
+    merged.push_back(*at);
+    merged.insert(merged.end(), grown.begin() + j + 1, grown.end());
+    if (merged.size() < 3) break;
+    grown.swap(merged);
+  }
+  if (grown.size() < 3 || !self_intersections(grown).empty())
     throw BuildError("wall offset split the outline; thickness is too large");
   return grown;
 }

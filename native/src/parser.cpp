@@ -401,6 +401,12 @@ void attach_depth_points(Room& room) {
       if (!(p.z >= op.sill() && p.z <= op.head())) continue;
       const double along = (p.x - ax) * tx + (p.y - ay) * ty;
       if (along < -kDepthEdgeTol || along > length + kDepthEdgeTol) continue;
+      // Near the middle, not merely inside the span.
+      if (std::fabs(along - length / 2) > length / 2 * kDepthCentre) continue;
+      const double span = op.head() - op.sill();
+      if (span > 0 &&
+          std::fabs(p.z - (op.sill() + op.head()) / 2) > span / 2 * kDepthCentre)
+        continue;
       const double off = (p.x - ax) * nx + (p.y - ay) * ny;
       if (std::fabs(off) < kDepthMin || std::fabs(off) > kDepthMax) continue;
       // The furthest shot on each side is the one that describes it: a nearer

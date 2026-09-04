@@ -338,6 +338,12 @@ def _detect_pervaz(room: Room) -> None:
 DEPTH_MAX = 200.0        # cm; further out than this is not a fitting on a wall
 DEPTH_MIN = 0.5          # cm; closer than this is a shot on the wall itself
 DEPTH_EDGE_TOL = 5.0     # cm the shot may sit outside the rectangle's width
+# "A point in the middle of it" is the whole convention, so the shot has to
+# actually be near the middle - within the central half of the rectangle both
+# ways. Anything else is a shot that merely fell inside the span: the top of a
+# doorway two metres up claimed one, and the door came back as a box 84 x 200 x
+# 131 cm standing in the corridor.
+DEPTH_CENTRE = 0.5       # fraction of the half-width and half-height
 
 
 def _attach_depth_points(room: Room) -> None:
@@ -390,6 +396,12 @@ def _attach_depth_points(room: Room) -> None:
                 continue
             along = (p.x - ax) * tx + (p.y - ay) * ty
             if not (-DEPTH_EDGE_TOL <= along <= length + DEPTH_EDGE_TOL):
+                continue
+            # Near the middle, not merely inside the span.
+            if abs(along - length / 2) > length / 2 * DEPTH_CENTRE:
+                continue
+            span = op.head - op.sill
+            if span > 0 and abs(p.z - (op.sill + op.head) / 2) > span / 2 * DEPTH_CENTRE:
                 continue
             off = (p.x - ax) * nx + (p.y - ay) * ny
             if not (DEPTH_MIN <= abs(off) <= DEPTH_MAX):

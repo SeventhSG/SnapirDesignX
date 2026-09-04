@@ -52,6 +52,12 @@ inline constexpr double kPervazHeightMax = 30.0;
 inline constexpr double kDepthMax = 200.0;      // cm
 inline constexpr double kDepthMin = 0.5;        // cm
 inline constexpr double kDepthEdgeTol = 5.0;    // cm outside the width
+// "A point in the middle of it" is the whole convention, so the shot has to
+// actually be near the middle - within the central half of the rectangle both
+// ways. Anything else merely fell inside the span: the top of a doorway two
+// metres up claimed one, and the door came back as a box 84 x 200 x 131 cm
+// standing in the corridor.
+inline constexpr double kDepthCentre = 0.5;
 
 // Parse one room CSV into a classified Room.
 Room read_room(const std::string& path);
