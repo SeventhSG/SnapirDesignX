@@ -1038,8 +1038,13 @@ export default function App() {
               </div>
             ) : (
               <>
+                {/* Every project, not the newest few. Capping the list meant
+                    importing one pushed another off the screen, which reads as
+                    the older one having been lost. They are in most-recently-
+                    opened order and the grid wraps, so a long list costs
+                    nothing but scrolling. */}
                 <div className="cards">
-                  {projects.slice(0, 3).map((p) => (
+                  {projects.map((p) => (
                     <button className="card" key={p.id} onClick={() => openProject(p.id)}>
                       <b>{p.name}</b>
                       <span className="path">{p.folder}</span>
