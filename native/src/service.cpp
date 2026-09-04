@@ -49,7 +49,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.2";
+constexpr const char* kVersion = "1.3.3";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -462,6 +462,10 @@ Json room_json(const Room& room, const RoomOverride* ov,
   if (room.floor_z) j["floorZ"] = *room.floor_z;
   else j["floorZ"] = nullptr;
 
+  // Set only when this room departs from the job thickness.
+  if (room.wall_thickness) j["wallThickness"] = *room.wall_thickness;
+  else j["wallThickness"] = nullptr;
+
   // Every line the surveyor drew, plus anything the operator added.
   Json segs = Json::array();
   for (const auto& s : room.segments) segs.push_back(Json::array({s.first, s.second}));
@@ -643,6 +647,25 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                            {"Access-Control-Allow-Headers", "*"}});
   svr.Options(".*", [](const httplib::Request&, httplib::Response& res) {
     res.status = 204;
+  });
+
+  // Anything a route did not catch itself. Without this the client is handed a
+  // bare "Internal Server Error" with the reason thrown away, which on a tablet
+  // in a stairwell is the difference between a fixable problem and a dead end.
+  svr.set_exception_handler([](const httplib::Request& req, httplib::Response& res,
+                               std::exception_ptr ep) {
+    std::string what = "unknown error";
+    try {
+      std::rethrow_exception(ep);
+    } catch (const std::exception& e) {
+      what = e.what();
+    } catch (...) {
+      // OCCT and a few other libraries still throw types of their own.
+    }
+    Json j;
+    j["detail"] = req.method + " " + req.path + ": " + what;
+    res.status = 500;
+    res.set_content(j.dump(), "application/json");
   });
 
   // -------------------------------------------------------------- lifecycle
@@ -874,8 +897,12 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                   ov.dropped_points = b["droppedPoints"].get<std::vector<std::string>>();
                 if (b.contains("ceilingHeight") && !b["ceilingHeight"].is_null())
                   ov.ceiling_height = b["ceilingHeight"].get<double>();
-                if (b.contains("wallThickness") && !b["wallThickness"].is_null())
-                  ov.wall_thickness = b["wallThickness"].get<double>();
+                if (b.contains("wallThickness")) {
+                  // An explicit null hands the room back to the job default,
+                  // which is a different thing from not mentioning it at all.
+                  if (b["wallThickness"].is_null()) ov.wall_thickness.reset();
+                  else ov.wall_thickness = b["wallThickness"].get<double>();
+                }
                 if (b.contains("disabledOpenings") && !b["disabledOpenings"].is_null())
                   ov.disabled_openings = b["disabledOpenings"].get<std::vector<int>>();
                 if (b.contains("fixtureOverrides") && !b["fixtureOverrides"].is_null())

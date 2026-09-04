@@ -461,6 +461,10 @@ export default function App() {
   const setOpeningKind = (key: string, kind: string) =>
     patch({ openingKindOverrides: { [key]: kind } }, true);
 
+  /** Give this one room its own wall thickness, or hand it back to the job. */
+  const setRoomThickness = (mm: number | null) =>
+    patch({ wallThickness: mm }, true);
+
   /* ---------------- doors hooked to other rooms ---------------- */
 
   const linkDoor = async (openingA: number, roomBName: string, openingB: number) => {
@@ -1478,6 +1482,22 @@ export default function App() {
                   )}
                 </div>
               )}
+
+              {/* A room with a pier or a narrow neck cannot carry the job's
+                  thickness without the walls swallowing it, so that room gets
+                  to differ. Blank means it follows the job. */}
+              <div className="grp">
+                <h4>{T("thisRoom")}</h4>
+                <label className="fldlabel">{T("wallThickness")}</label>
+                <Stepper value={room.wallThickness ?? project?.thickness ?? 0}
+                         onChange={setRoomThickness} />
+                {room.wallThickness != null && (
+                  <button className="btn q sm delrow"
+                          onClick={() => setRoomThickness(null)}>
+                    {T("useJobDefault")}
+                  </button>
+                )}
+              </div>
 
               <div className="grp">
                 <h4>{T("roomInfo")}</h4>

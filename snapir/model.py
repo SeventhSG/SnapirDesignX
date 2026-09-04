@@ -67,12 +67,13 @@ class Jamb:
 # set. Doors and windows are cut through the wall; the others are fittings
 # that hang on it and stand out into the room.
 CUT_KINDS = ("door", "window")
-FITTING_KINDS = ("boiler", "socket", "lamp", "panel", "empty")
+FITTING_KINDS = ("object", "boiler", "socket", "lamp", "panel", "empty")
 OPENING_KINDS = CUT_KINDS + FITTING_KINDS
 
 # What each one is called on site, for the operator's own layer names.
 KIND_LABELS = {
     "door": "Door", "window": "Window",
+    "object": "Object on the wall",
     "boiler": "Boiler",          # бойлер
     "socket": "Socket",          # щепсел
     "lamp": "Wall lamp",         # лампа

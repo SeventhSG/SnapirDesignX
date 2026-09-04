@@ -322,6 +322,12 @@ void attach_depth_points(Room& room) {
       op.depth = best_off;
       op.depth_point = best->name;
       best->role = Role::Depth;
+      // The shot itself says what this is. Nobody measures how far a doorway
+      // sticks out of a wall, so a rectangle with a depth shot is a thing
+      // standing on the wall - and the wall behind it stays whole. An
+      // operator's own choice still overrides this later.
+      if (op.kind == "door" || op.kind == "window" || op.kind == "unknown")
+        op.kind = "object";
     }
   }
 }

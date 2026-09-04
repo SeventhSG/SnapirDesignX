@@ -145,3 +145,48 @@ def test_a_measured_depth_beats_the_setting():
 def test_without_a_middle_shot_the_setting_is_used():
     room = _room_with_rectangle()
     assert room.openings[0].depth is None
+
+
+def test_a_depth_shot_means_an_object_not_a_hole():
+    # Nobody measures how far a doorway sticks out of a wall. The shot itself
+    # says this is a thing standing on the wall, so the wall behind it stays
+    # whole - which is what the operator saw a hole punched through.
+    room = _room_with_depth_shot()
+    op = room.openings[0]
+    assert op.kind == "object"
+    assert not op.cuts
+
+
+def test_the_box_stops_exactly_at_the_dot():
+    from snapir.solid import _fitting_body, _occ
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRepBndLib import BRepBndLib
+
+    cfg = BuildSettings()
+    occ = _occ()
+    for off in (10.0, 35.0, 60.0):
+        room = _room_with_depth_shot(off=off)
+        ring = [p.xy for p in room.outline]
+        body = _fitting_body(room.openings[0], ring, cfg, occ)
+        box = Bnd_Box()
+        BRepBndLib.Add_s(body, box)
+        # The wall is at y = 0 and the room is on the +y side of it.
+        assert box.CornerMax().Y() / 10.0 == pytest.approx(off, abs=0.01)
+        # And it reaches a little way into the wall, so the fuse is clean.
+        assert box.CornerMin().Y() / 10.0 < 0.0
+
+
+def test_the_wall_is_not_cut_when_there_is_a_depth_shot():
+    from snapir.solid import build_room, solid_stats
+
+    cfg = BuildSettings()
+    with_object = _room_with_depth_shot(off=35.0)
+    volume = solid_stats(build_room(with_object, cfg))["volume_m3"]
+
+    # Same room with the rectangle taken out of the survey entirely.
+    plain = _room_with_depth_shot(off=35.0)
+    plain.openings = []
+    bare = solid_stats(build_room(plain, cfg))["volume_m3"]
+
+    # Material added, never removed. A hole would have put this below `bare`.
+    assert volume > bare

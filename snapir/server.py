@@ -27,7 +27,7 @@ from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.3.2")
+app = FastAPI(title="Snapir Design X", version="1.3.3")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -183,6 +183,8 @@ def _room_json(room: Room, ov=None, folder: str = "") -> dict:
         "ceilingHeight": round(room.ceiling_height(), 1) if room.ceiling_height() else None,
         "outline": [p.name for p in room.outline],
         "floorZ": room.floor_z,
+        # Set only when this room departs from the job thickness.
+        "wallThickness": room.wall_thickness,
         # Every line the surveyor drew, plus anything the operator added.
         "segments": [list(s) for s in room.segments],
         "links": [list(l) for l in room.links],
@@ -346,7 +348,9 @@ def patch_room(pid: str, name: str, body: RoomPatch):
         ov.dropped_points = body.droppedPoints
     if body.ceilingHeight is not None:
         ov.ceiling_height = body.ceilingHeight
-    if body.wallThickness is not None:
+    if "wallThickness" in body.model_fields_set:
+        # An explicit null hands the room back to the job default, which is a
+        # different thing from not mentioning thickness at all.
         ov.wall_thickness = body.wallThickness
     if body.disabledOpenings is not None:
         ov.disabled_openings = body.disabledOpenings

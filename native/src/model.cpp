@@ -42,13 +42,15 @@ bool kind_cuts(const std::string& kind) {
 
 const std::vector<std::string>& opening_kinds() {
   static const std::vector<std::string> kinds = {
-      "door", "window", "boiler", "socket", "lamp", "panel", "empty"};
+      "door",  "window", "object", "boiler",
+      "socket", "lamp",   "panel",  "empty"};
   return kinds;
 }
 
 std::string kind_label(const std::string& kind) {
   if (kind == "door") return "Door";
   if (kind == "window") return "Window";
+  if (kind == "object") return "Object on the wall";
   if (kind == "boiler") return "Boiler";    // бойлер
   if (kind == "socket") return "Socket";    // щепсел
   if (kind == "lamp") return "Wall lamp";   // лампа

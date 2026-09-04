@@ -359,6 +359,12 @@ def _attach_depth_points(room: Room) -> None:
         if best is not None:
             op.depth, op.depth_point = best[0], best[1].name
             best[1].role = Role.DEPTH
+            # The shot itself says what this is. Nobody measures how far a
+            # doorway sticks out of a wall, so a rectangle with a depth shot is
+            # a thing standing on the wall - and the wall behind it stays
+            # whole. An operator's own choice still overrides this later.
+            if op.kind in ("door", "window", "unknown"):
+                op.kind = "object"
 
 
 def _step_move(a: Point, b: Point) -> str | None:

@@ -59,6 +59,8 @@ export interface Room {
   openingKinds: OpeningKind[];
   segments: [string, string][]; links: [string, string][];
   crossings: Crossing[]; elements: Element[];
+  /** Set when this room overrides the job's wall thickness. */
+  wallThickness: number | null;
   status: Status; builtAt: string | null; stepPath: string | null;
 }
 
