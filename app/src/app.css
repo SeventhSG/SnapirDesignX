@@ -700,3 +700,30 @@ button{font-family:inherit}
      background:var(--panel);color:var(--ink);font:inherit;font-size:12px;
      cursor:pointer}
 .fmt:hover{border-color:var(--gold)}
+
+/* The crosshair for adding a point from inside the room. Centred on the
+   viewport because that is where the ray is cast, and it must not eat pointer
+   events or looking around would stop working. */
+.crosshair {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 5;
+}
+.crosshair i {
+  position: absolute;
+  background: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold-ink);
+}
+.crosshair i:nth-child(1) { width: 26px; height: 2px; }
+.crosshair i:nth-child(2) { width: 2px; height: 26px; }
+.crosshair .btn {
+  position: absolute;
+  transform: translateY(46px);
+  pointer-events: auto;   /* the one thing here that is clickable */
+}
+@media (prefers-reduced-motion: no-preference) {
+  .crosshair i { transition: background var(--fast) var(--ease); }
+}

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, panoramaUrl, type BuildResult, type Connection, type Crossing,
          type Project, type Room, type Status } from "./api";
 import { t, type Key, type Lang } from "./i18n";
 import Sketch, { type EditMode } from "./Sketch";
-import Viewport, { ROLE_COLOR, type DoorLink, type GhostRoom } from "./Viewport";
+import Viewport, { ROLE_COLOR, type AimHit, type DoorLink,
+         type GhostRoom } from "./Viewport";
 import { solveRoom, type Pose } from "./panorama";
 
 /** A room's own floor outline, resolved from point names to coordinates. */
@@ -225,6 +226,9 @@ export default function App() {
   const [ring, setRing] = useState<string[]>([]);
   const [pointName, setPointName] = useState<string | null>(null);
   const [look, setLook] = useState<"orbit" | "inside">("orbit");
+  /** Standing in the room with the crosshair up, ready to add what was missed. */
+  const [aiming, setAiming] = useState(false);
+  const aimHandle = useRef<(() => AimHit | null) | null>(null);
   const [ghost, setGhost] = useState(false);
   /* Doors hooked to other rooms, for the whole project (a connection can
      point at any room, not just the current one's flat-mates), whether the
@@ -460,6 +464,31 @@ export default function App() {
    *  built from, so the answer sticks across every later rebuild. */
   const setOpeningKind = (key: string, kind: string) =>
     patch({ openingKindOverrides: { [key]: kind } }, true);
+
+  /**
+   * Add a point where the crosshair is pointing.
+   *
+   * For the corner nobody shot: stand in the room, turn the panorama on to see
+   * what is actually there, aim, and put a point on it. It is constructed, not
+   * measured, so it is marked that way and left unclassified for the operator
+   * to say what it is.
+   */
+  const addAimedPoint = async () => {
+    if (!room) return;
+    const at = aimHandle.current?.();
+    if (!at) { say(T("aimNothing"), true); return; }
+
+    const name = nextDerived();
+    const derived = [
+      ...room.points.filter((p) => p.derived)
+        .map((p) => ({ name: p.name, x: p.x, y: p.y, z: p.z,
+                       role: p.role, from: p.source })),
+      { name, x: +at.x.toFixed(2), y: +at.y.toFixed(2), z: +at.z.toFixed(2),
+        role: "unknown", from: "added from inside the room" },
+    ];
+    await patch({ derivedPoints: derived }, true);
+    say(`${T("pointAdded")} ${name}`);
+  };
 
   /** Round or square. The survey cannot tell, so the operator does. */
   const setOpeningShape = (key: string, shape: string) =>
@@ -1160,7 +1189,20 @@ export default function App() {
                   ghostRooms={viewportGhosts}
                   onCrossDoor={viewportOnDoor}
                   enterAt={enterAt}
+                  aimHandle={aimHandle}
                 />
+              )}
+
+              {/* The crosshair sits dead centre, where the ray is cast. On a
+                  tablet a fingertip would cover the very thing being aimed at,
+                  so nothing is picked by touch here. */}
+              {look === "inside" && aiming && !inSketch && (
+                <div className="crosshair" aria-hidden="true">
+                  <i /><i />
+                  <button className="btn sm" onClick={addAimedPoint} disabled={busy}>
+                    {T("putPointHere")}
+                  </button>
+                </div>
               )}
               {inSketch && view === "2d" && (
                 <Sketch points={room.points}
@@ -1234,6 +1276,13 @@ export default function App() {
                         <button aria-pressed={look === "inside"}
                                 onClick={() => setLook("inside")}>{T("vInside")}</button>
                       </div>
+                      {look === "inside" && (
+                        <div className="seg quiet">
+                          <button aria-pressed={aiming}
+                                  onClick={() => setAiming(!aiming)}>
+                            {T("addPoint")}</button>
+                        </div>
+                      )}
                       {look === "inside" && panoUrl && (
                         <div className="seg quiet">
                           <button aria-pressed={panoOpen} disabled={solving}

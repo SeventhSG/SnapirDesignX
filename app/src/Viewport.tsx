@@ -66,6 +66,9 @@ const LINE_3D: Record<string, { color: number; w: number; dash: boolean }> = {
   other: { color: 0xb0afa8, w: 1.4, dash: false },
 };
 
+/** A place in the room, in the survey's own centimetres. */
+export interface AimHit { x: number; y: number; z: number }
+
 interface Props {
   mesh: MeshData | null;
   selected: number | null;
@@ -89,6 +92,10 @@ interface Props {
   panoOpen?: boolean;
   /** Where the eye is now, so the chip above can crop to match. */
   onLook?: (look: { yaw: number; at: number | null }) => void;
+  /** Filled with a function that reads whatever the crosshair is pointing at,
+   *  so standing inside the room and aiming can add a point the surveyor
+   *  missed. Null when nothing is in front of it. */
+  aimHandle?: React.MutableRefObject<(() => AimHit | null) | null>;
   /** Doors hooked to another room, in this room's own survey centimetres.
    *  Walking into one, or clicking its ghost, crosses into the room beyond. */
   doors?: DoorLink[];
@@ -184,7 +191,7 @@ const CM = 0.01;                       // survey centimetres to scene metres
 export default function Viewport({
   mesh, selected, onSelect, sketch, look = "orbit", ghost = false, dark = false,
   bounds, stations, floorZ, pano = null, panoOpen = false, onLook,
-  doors, ghostRooms, onCrossDoor, enterAt,
+  doors, ghostRooms, onCrossDoor, enterAt, aimHandle,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const S = useRef<Scene>();
@@ -750,6 +757,22 @@ export default function Viewport({
       return s.faceIds[hit.faceIndex] ?? null;
     };
 
+    // What the crosshair is pointing at, in survey centimetres.
+    //
+    // Straight down the middle of the view rather than at a finger: standing
+    // in the room and aiming is the whole gesture, and on a tablet a fingertip
+    // covers the very thing being aimed at.
+    const aimCentre = (): AimHit | null => {
+      if (!s.body || !s.solid.visible) return null;
+      ndc.x = 0;
+      ndc.y = 0;
+      ray.setFromCamera(ndc, s.camera);
+      const hit = ray.intersectObject(s.body, false)[0];
+      if (!hit) return null;
+      return toSurvey(s, hit.point);
+    };
+    if (aimHandle) aimHandle.current = aimCentre;
+
     const markerUnder = (e: PointerEvent): number | null => {
       if (!s.markers.length || !s.inside) return null;
       aim(e);
@@ -1012,6 +1035,15 @@ const SNAP = 0.5;       // metres: near enough to a station to be at it
  * moved onto the origin. Both steps are folded in here so nothing else has to
  * think about it.
  */
+/** The inverse of toWorld: a place in the scene, back in survey centimetres. */
+function toSurvey(s: Scene, v: THREE.Vector3): AimHit {
+  return {
+    x: (v.x + s.centre.x) / CM,
+    y: (s.centre.y - v.z) / CM,
+    z: (v.y + s.centre.z) / CM,
+  };
+}
+
 function toWorld(s: Scene, x: number, y: number, z: number): THREE.Vector3 {
   return new THREE.Vector3(
     x * CM - s.centre.x,
