@@ -404,6 +404,7 @@ def _stairs_bodies(room: Room, cfg: BuildSettings, floor: Plane, occ) -> list:
     bodies = []
     for stair in room.stairs:
         pts = stair.points
+        lowest = min(p.z for p in pts)
         for i in range(len(pts) - 1):
             a, b = pts[i], pts[i + 1]
             dx, dy = b.x - a.x, b.y - a.y
@@ -419,10 +420,20 @@ def _stairs_bodies(room: Room, cfg: BuildSettings, floor: Plane, occ) -> list:
                 (b.x - nx * hw, b.y - ny * hw),
                 (a.x - nx * hw, a.y - ny * hw),
             ]
-            bottom = level_plane(floor.z_at(a.x, a.y))
-            top = level_plane(max(a.z, b.z))
+            # A flight seen from the top of it descends, and then every step
+            # sits below the floor it starts from. Stacking upward from the
+            # floor builds each box upside down, and fusing those into the
+            # shell destroys it - a corridor came back as 0.15 m3 of rubble.
+            # The mass of a step runs from its own tread down to whatever the
+            # flight rests on, which is the lower of the floor and the bottom
+            # of the flight itself.
+            base = min(floor.z_at(a.x, a.y), lowest)
+            top_z = max(a.z, b.z)
+            if top_z - base < 0.5:
+                continue
             try:
-                bodies.append(_prism(corners, bottom, top, occ))
+                bodies.append(_prism(corners, level_plane(base),
+                                     level_plane(top_z), occ))
             except BuildError:
                 continue
     return bodies

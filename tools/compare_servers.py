@@ -8,6 +8,13 @@ from __future__ import annotations
 
 import json
 import sys
+# The C++ side writes UTF-8. Windows hands Python a cp1252 stdout by default,
+# which cannot encode a Turkish room name and kills the dump before it prints
+# anything - so the two halves could not be compared at all on the machine the
+# port is developed on.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 import urllib.error
 import urllib.request
 

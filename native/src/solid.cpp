@@ -325,6 +325,8 @@ std::vector<TopoDS_Shape> stairs_bodies(const Room& room, const BuildSettings& c
   std::vector<TopoDS_Shape> bodies;
   for (const auto& stair : room.stairs) {
     const auto& pts = stair.points;
+    double lowest = pts.front().z;
+    for (const auto& p : pts) lowest = std::min(lowest, p.z);
     for (size_t i = 0; i + 1 < pts.size(); ++i) {
       const Point& a = pts[i];
       const Point& b = pts[i + 1];
@@ -340,9 +342,18 @@ std::vector<TopoDS_Shape> stairs_bodies(const Room& room, const BuildSettings& c
           {b.x - nx * hw, b.y - ny * hw},
           {a.x - nx * hw, a.y - ny * hw},
       };
+      // A flight seen from the top of it descends, and then every step sits
+      // below the floor it starts from. Stacking upward from the floor builds
+      // each box upside down, and fusing those into the shell destroys it - a
+      // corridor came back as 0.15 m3 of rubble. The mass of a step runs from
+      // its own tread down to whatever the flight rests on, which is the lower
+      // of the floor and the bottom of the flight itself.
+      const double base = std::min(floor.z_at(a.x, a.y), lowest);
+      const double top_z = std::max(a.z, b.z);
+      if (top_z - base < 0.5) continue;
       try {
-        bodies.push_back(prism(corners, level_plane(floor.z_at(a.x, a.y)),
-                               level_plane(std::max(a.z, b.z))));
+        bodies.push_back(
+            prism(corners, level_plane(base), level_plane(top_z)));
       } catch (const std::exception&) {
         continue;
       }

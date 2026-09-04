@@ -84,3 +84,42 @@ def test_the_operator_can_overrule_the_detector_and_it_sticks():
     rebuild(room)
     assert victim.role is Role.FLOOR, "inference overwrote the operator"
     assert len(room.pervaz) == 3
+
+
+def _room_with_drawn_lines(tmp_path):
+    """Skirting as the surveyor actually traces it: the outer line down at the
+    real floor, then the same way back along the top of the board. With a
+    _FUKOKU beside it, so the room is read from the drawn lines."""
+    corners = [(0, 0), (-431, 0), (-431, -266), (0, -281)]
+    rows, n = [], 1
+    for (x, y) in corners:                       # the outer line, on the floor
+        rows.append(f"P_{n:03d};{x:.2f};{y:.2f};0.00;Zemin"); n += 1
+    for (x, y) in reversed(corners):             # back along the top of it
+        rows.append(f"P_{n:03d};{x + 2.2:.2f};{y + 2.2:.2f};6.40;Zemin"); n += 1
+    for (x, y) in corners:
+        rows.append(f"P_{n:03d};{x:.2f};{y:.2f};253.00;")
+        n += 1
+
+    csv = tmp_path / "Oda.csv"
+    csv.write_text("Kimlik;X (cm);Y (cm);Z (cm);Katman\n" + "\n".join(rows) + "\n",
+                   encoding="utf-8")
+    # The drawn ring: the outer line only, closed.
+    lines = ["Line start;Line end"]
+    for i in range(4):
+        lines.append(f"P_{i + 1:03d};P_{(i + 1) % 4 + 1:03d}")
+    (tmp_path / "Oda_FUKOKU.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return read_room(csv)
+
+
+def test_skirting_is_found_when_the_ring_came_from_drawn_lines(tmp_path):
+    # The drawn-lines path skipped skirting detection entirely, so on every
+    # room the surveyor had drawn - which is most of them - the board's upper
+    # run stayed tagged as floor and no skirting was ever reported.
+    room = _room_with_drawn_lines(tmp_path)
+    assert room.outline_source == "drawn"
+    assert len(room.pervaz) == 4
+    for v in room.pervaz:
+        assert v.height == pytest.approx(6.4, abs=0.1)
+        assert v.depth == pytest.approx(3.1, abs=0.2)
+    # And the ring is still the outer line, not doubled by the upper one.
+    assert len(room.outline) == 4

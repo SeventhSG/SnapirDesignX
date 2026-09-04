@@ -220,6 +220,27 @@ std::vector<std::pair<Jamb, Jamb>> pair_jambs(const std::vector<Jamb>& jambs,
   return pairs;
 }
 
+// The highest band of shots far enough above this floor to be its ceiling.
+std::optional<double> ceiling_above(const Room& room, double floor_z) {
+  std::vector<double> zs;
+  for (const auto& p : room.points) zs.push_back(p.z);
+  std::sort(zs.begin(), zs.end());
+  std::vector<std::vector<double>> bands;
+  for (double z : zs) {
+    if (!bands.empty() && z - bands.back().back() <= kZBandTol)
+      bands.back().push_back(z);
+    else
+      bands.push_back({z});
+  }
+  for (auto it = bands.rbegin(); it != bands.rend(); ++it) {
+    double sum = 0.0;
+    for (double v : *it) sum += v;
+    const double mean = sum / static_cast<double>(it->size());
+    if (it->size() >= 2 && mean - floor_z >= kMinRoomHeight) return mean;
+  }
+  return std::nullopt;
+}
+
 // The floor corners, in shot order, on the room's own level.
 //
 // Two things a stairwell breaks that a flat room never does.
@@ -672,6 +693,13 @@ bool from_drawn_lines(Room& room) {
   detect_stairs(room);
   room.stairs = group_stairs(room);
 
+  // And the skirting, which the drawn-lines path used to skip entirely. The
+  // surveyor traces the board as two runs - the outer line down at the real
+  // floor, then the same way back along the top of it - so where the room's
+  // ring came from the drawn lines the upper run stayed tagged as floor and was
+  // never recognised as a board at all.
+  detect_pervaz(room);
+
   room.controls.clear();
   for (const auto& p : room.points)
     if (p.role == Role::Control) room.controls.push_back(p);
@@ -697,7 +725,9 @@ void classify(Room& room) {
   room.floor_z = datums.first;
   room.ceiling_z = datums.second;
   if (!room.floor_z) return;
-  const double floor_z = *room.floor_z;
+  // Not const: once the flights are claimed the room's own level is known,
+  // and the datum is corrected to it below.
+  double floor_z = *room.floor_z;
 
   // The surveyor's own lines beat anything we could infer from shot order.
   if (!room.segments.empty() && from_drawn_lines(room)) {
@@ -725,6 +755,22 @@ void classify(Room& room) {
   // Then the skirting: a pair is two floor shots at one corner, and both of
   // them landing in the outline is what doubles the ring.
   detect_pervaz(room);
+
+  // Now that the flights are out of the way, the room's own floor is the level
+  // its remaining floor shots sit on. Until here the datum was the lowest
+  // reading in the file, which in a stairwell is the landing a storey down: it
+  // made every door read as a window against a sill test 160 cm too low, and
+  // fitted the floor plane through two levels at once.
+  {
+    const std::vector<Point> level = ring_of(room);
+    if (!level.empty()) {
+      double sum = 0.0;
+      for (const auto& p : level) sum += p.z;
+      floor_z = sum / static_cast<double>(level.size());
+      room.floor_z = floor_z;
+      room.ceiling_z = ceiling_above(room, floor_z);
+    }
+  }
 
   // Ceiling shots must be claimed before anything is clustered. A ceiling
   // corner often lands within a few centimetres of a window jamb in plan, and

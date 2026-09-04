@@ -191,6 +191,18 @@ def _classify(room: Room) -> None:
     # them landing in the outline is what doubles the ring.
     _detect_pervaz(room)
 
+    # Now that the flights are out of the way, the room's own floor is the
+    # level its remaining floor shots sit on. Until here the datum was the
+    # lowest reading in the file, which in a stairwell is the landing a storey
+    # down: it made every door read as a window against a sill test 160 cm too
+    # low, and fitted the floor plane through two levels at once.
+    level = _ring_of(room)
+    if level:
+        floor_z = sum(p.z for p in level) / len(level)
+        room.floor_z = floor_z
+        ceil_z = _ceiling_above(room, floor_z)
+        room.ceiling_z = ceil_z
+
     # Ceiling shots must be claimed before anything is clustered. A ceiling
     # corner often lands within a few centimetres of a window jamb in plan, and
     # if the two merge the cluster spans floor to ceiling and gets read as an
@@ -534,6 +546,22 @@ def _group_stairs(points: list[Point]) -> list[Stair]:
     return out
 
 
+def _ceiling_above(room: Room, floor_z: float) -> float | None:
+    """The highest band of shots far enough above this floor to be its ceiling."""
+    zs = sorted(p.z for p in room.points)
+    bands: list[list[float]] = []
+    for z in zs:
+        if bands and z - bands[-1][-1] <= Z_BAND_TOL:
+            bands[-1].append(z)
+        else:
+            bands.append([z])
+    for b in reversed(bands):
+        mean = sum(b) / len(b)
+        if len(b) >= 2 and mean - floor_z >= MIN_ROOM_HEIGHT:
+            return mean
+    return None
+
+
 def _ring_of(room: Room) -> list[Point]:
     """The floor corners, in shot order, on the room's own level.
 
@@ -822,6 +850,13 @@ def _from_drawn_lines(room: Room) -> bool:
     _attach_depth_points(room)
     _detect_stairs(room)
     room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
+
+    # And the skirting, which the drawn-lines path used to skip entirely. The
+    # surveyor traces the board as two runs - the outer line down at the real
+    # floor, then the same way back along the top of it - so where the room's
+    # ring came from the drawn lines the upper run stayed tagged as floor and
+    # was never recognised as a board at all.
+    _detect_pervaz(room)
 
     room.controls = [p for p in room.points if p.role is Role.CONTROL]
     return True

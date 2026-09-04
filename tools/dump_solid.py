@@ -10,6 +10,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# The C++ side writes UTF-8. Windows hands Python a cp1252 stdout by default,
+# which cannot encode a Turkish room name and kills the dump before it prints
+# anything - so the two halves could not be compared at all on the machine the
+# port is developed on.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+
 from snapir.parser import read_project
 from snapir.settings import BuildSettings
 from snapir.solid import build_room, solid_stats, wall_body
