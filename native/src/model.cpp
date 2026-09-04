@@ -49,6 +49,11 @@ const std::vector<std::string>& opening_kinds() {
   return kinds;
 }
 
+const std::vector<std::string>& shapes() {
+  static const std::vector<std::string> s = {"box", "round"};
+  return s;
+}
+
 std::string kind_label(const std::string& kind) {
   if (kind == "door") return "Door";
   if (kind == "window") return "Window";

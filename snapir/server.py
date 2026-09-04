@@ -20,14 +20,14 @@ from pydantic import BaseModel
 from .elements import elements as room_elements
 from .elements import opening_key as _opening_key
 from .geometry import polygon_area
-from .model import KIND_LABELS, OPENING_KINDS, Room
+from .model import KIND_LABELS, OPENING_KINDS, SHAPES, Room
 from .parser import read_project, read_room
 from .settings import BuildSettings
 from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.3.5")
+app = FastAPI(title="Snapir Design X", version="1.3.6")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -131,6 +131,15 @@ def _apply_overrides(pid: str, room: Room) -> Room:
             kind = ov.opening_kind_overrides.get(opening_key(o))
             if kind in OPENING_KINDS:
                 o.kind = kind
+    if ov.opening_shape_overrides:
+        # Round or square is the operator's call: four corners on a wall look
+        # the same either way.
+        from .elements import opening_key
+        from .model import SHAPES
+        for o in room.openings:
+            shape = ov.opening_shape_overrides.get(opening_key(o))
+            if shape in SHAPES:
+                o.shape = shape
     if ov.disabled_openings:
         room.openings = [o for i, o in enumerate(room.openings)
                          if i not in set(ov.disabled_openings)]
@@ -211,12 +220,14 @@ def _room_json(room: Room, ov=None, folder: str = "") -> dict:
             "outDepth": round(o.out_depth, 1) if o.out_depth else None,
             "inDepth": round(o.in_depth, 1) if o.in_depth else None,
             "depthPoints": o.depth_points,
+            "shape": o.solid_shape,
         } for i, o in enumerate(room.openings)],
         # Everything a wall rectangle is allowed to be. The survey cannot tell
         # a boiler from a window, so the picker is the answer, not a better
         # guess.
         "openingKinds": [{"kind": k, "label": KIND_LABELS.get(k, k)}
                          for k in OPENING_KINDS],
+        "shapes": list(SHAPES),
         "stairs": [{
             "points": [p.name for p in s.points],
             "steps": s.steps, "rise": round(s.rise, 1), "going": round(s.going, 1),
@@ -332,6 +343,7 @@ class RoomPatch(BaseModel):
     wallThickness: float | None = None
     disabledOpenings: list[int] | None = None
     openingKindOverrides: dict[str, str] | None = None
+    openingShapeOverrides: dict[str, str] | None = None
     fixtureOverrides: dict[str, dict] | None = None
     roleOverrides: dict[str, str] | None = None
     addedSegments: list[list[str]] | None = None
@@ -358,6 +370,9 @@ def patch_room(pid: str, name: str, body: RoomPatch):
         ov.disabled_openings = body.disabledOpenings
     if body.openingKindOverrides is not None:
         ov.opening_kind_overrides = {**ov.opening_kind_overrides, **body.openingKindOverrides}
+    if body.openingShapeOverrides is not None:
+        ov.opening_shape_overrides = {**ov.opening_shape_overrides,
+                                      **body.openingShapeOverrides}
     if body.removedWalls is not None:
         ov.removed_walls = body.removedWalls
     if body.derivedPoints is not None:

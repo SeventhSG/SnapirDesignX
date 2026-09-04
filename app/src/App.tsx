@@ -461,6 +461,10 @@ export default function App() {
   const setOpeningKind = (key: string, kind: string) =>
     patch({ openingKindOverrides: { [key]: kind } }, true);
 
+  /** Round or square. The survey cannot tell, so the operator does. */
+  const setOpeningShape = (key: string, shape: string) =>
+    patch({ openingShapeOverrides: { [key]: shape } }, true);
+
   /** Give this one room its own wall thickness, or hand it back to the job. */
   const setRoomThickness = (mm: number | null) =>
     patch({ wallThickness: mm }, true);
@@ -1467,6 +1471,23 @@ export default function App() {
                                   className={"role" + (selectedRect.kind === k.kind ? " on" : "")}
                                   onClick={() => setOpeningKind(selectedRect.key, k.kind)}>
                             {k.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Four corners on a wall look the same whether the thing
+                      is round or square, so this is the operator's too. */}
+                  {selectedRect && !selectedRect.cuts && (
+                    <>
+                      <label className="fldlabel">{T("shapeIs")}</label>
+                      <div className="roles">
+                        {(room.shapes ?? []).map((sh) => (
+                          <button key={sh}
+                                  className={"role" + (selectedRect.shape === sh ? " on" : "")}
+                                  onClick={() => setOpeningShape(selectedRect.key, sh)}>
+                            {T(sh === "round" ? "shapeRound" : "shapeBox")}
                           </button>
                         ))}
                       </div>

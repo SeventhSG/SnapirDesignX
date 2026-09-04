@@ -34,6 +34,8 @@ struct RoomOverride {
   // openings list: that list is rebuilt from scratch on every correction, so an
   // index silently comes to mean a different opening.
   std::map<std::string, std::string> opening_kind_overrides;
+  // Same keying: element key -> "box" | "round".
+  std::map<std::string, std::string> opening_shape_overrides;
   std::map<std::string, Json> fixture_overrides;
   std::map<std::string, std::string> role_overrides;  // point -> role
   std::vector<std::vector<std::string>> added_segments;

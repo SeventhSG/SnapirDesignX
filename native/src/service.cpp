@@ -49,7 +49,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.5";
+constexpr const char* kVersion = "1.3.6";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -417,6 +417,16 @@ Room apply_overrides(const std::string& pid, const Room& parsed) {
     }
   }
 
+  if (!ov->opening_shape_overrides.empty()) {
+    // Round or square is the operator's call: four corners on a wall look the
+    // same either way.
+    for (auto& o : room.openings) {
+      const auto it = ov->opening_shape_overrides.find(opening_key(o));
+      if (it == ov->opening_shape_overrides.end()) continue;
+      if (it->second == "box" || it->second == "round") o.shape = it->second;
+    }
+  }
+
   if (!ov->disabled_openings.empty()) {
     const std::set<int> off(ov->disabled_openings.begin(), ov->disabled_openings.end());
     std::vector<Opening> keep;
@@ -516,7 +526,8 @@ Json room_json(const Room& room, const RoomOverride* ov,
                              o.out_depth ? Json(round_to(*o.out_depth, 1)) : Json()},
                             {"inDepth",
                              o.in_depth ? Json(round_to(*o.in_depth, 1)) : Json()},
-                            {"depthPoints", o.depth_points}});
+                            {"depthPoints", o.depth_points},
+                            {"shape", o.solid_shape()}});
   }
   j["openings"] = openings;
 
@@ -526,6 +537,7 @@ Json room_json(const Room& room, const RoomOverride* ov,
   for (const auto& k : opening_kinds())
     kinds.push_back(Json{{"kind", k}, {"label", kind_label(k)}});
   j["openingKinds"] = kinds;
+  j["shapes"] = shapes();
 
   Json stairs = Json::array();
   for (const auto& s : room.stairs) {
@@ -930,6 +942,10 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                     !b["openingKindOverrides"].is_null())
                   for (const auto& kv : b["openingKindOverrides"].items())
                     ov.opening_kind_overrides[kv.key()] = kv.value().get<std::string>();
+                if (b.contains("openingShapeOverrides") &&
+                    !b["openingShapeOverrides"].is_null())
+                  for (const auto& kv : b["openingShapeOverrides"].items())
+                    ov.opening_shape_overrides[kv.key()] = kv.value().get<std::string>();
                 if (b.contains("removedWalls") && !b["removedWalls"].is_null())
                   ov.removed_walls = b["removedWalls"].get<std::vector<std::string>>();
                 if (b.contains("derivedPoints") && !b["derivedPoints"].is_null())

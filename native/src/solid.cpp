@@ -233,6 +233,19 @@ TopoDS_Shape recess_cutter(const Opening& op, const std::vector<Pt>& ring,
   const double back = -(op.in_depth ? *op.in_depth : cm(cfg.panel_depth));
   const double mouth = cm(cfg.wall_thickness);  // overshoot, so the face cuts clean
   const double half = std::max(op.width(), 1.0) / 2;
+
+  if (op.solid_shape() == "round") {
+    // A round hollow: the same cylinder, used to take material away. Laid on
+    // its side so it bores into the wall rather than standing in it.
+    const double radius = std::min(half, std::max(op.height(), 1.0) / 2);
+    const double zc = (op.sill() + op.head()) / 2;
+    const gp_Pnt base((w.seat.x + w.normal.x * mouth) * kCmToMm,
+                      (w.seat.y + w.normal.y * mouth) * kCmToMm, zc * kCmToMm);
+    const gp_Ax2 axis(base, gp_Dir(-w.normal.x, -w.normal.y, 0.0));
+    return BRepPrimAPI_MakeCylinder(axis, radius * kCmToMm,
+                                    (mouth - back) * kCmToMm)
+        .Shape();
+  }
   const std::vector<Pt> corners = {
       {w.seat.x + w.tangent.x * half + w.normal.x * back,
        w.seat.y + w.tangent.y * half + w.normal.y * back},
@@ -271,12 +284,14 @@ TopoDS_Shape fitting_body(const Opening& op, const std::vector<Pt>& ring,
   // merely happen to touch instead of one body.
   const double bite = cm(cfg.socket_embed);
 
-  if (op.kind == "boiler") {
-    // A tank: round, upright, its back in the wall.
-    const double radius = std::min(depth, std::max(op.width(), 1.0) / 2);
-    const double reach = std::max(radius - std::min(bite, radius / 2), 0.1);
-    const gp_Pnt base((w.seat.x + w.normal.x * reach) * kCmToMm,
-                      (w.seat.y + w.normal.y * reach) * kCmToMm,
+  if (op.solid_shape() == "round") {
+    // Upright and round, its back in the wall. The rectangle gives the
+    // diameter, the depth says how far it stands out, so the front of the
+    // cylinder lands on the shot the same way a box's face would.
+    const double radius = std::max(op.width(), 1.0) / 2;
+    const double centre = std::min(depth - radius, radius - bite);
+    const gp_Pnt base((w.seat.x + w.normal.x * centre) * kCmToMm,
+                      (w.seat.y + w.normal.y * centre) * kCmToMm,
                       op.sill() * kCmToMm);
     const gp_Ax2 axis(base, gp_Dir(0.0, 0.0, 1.0));
     return BRepPrimAPI_MakeCylinder(axis, radius * kCmToMm,

@@ -319,6 +319,21 @@ def _recess_cutter(op: Opening, ring, cfg: BuildSettings, occ):
     back = -(op.in_depth or cm(cfg.panel_depth))
     mouth = cm(cfg.wall_thickness)      # overshoot into the room, cut cleanly
     half = max(op.width, 1.0) / 2
+
+    if op.solid_shape == "round":
+        # A round hollow: the same cylinder, used to take material away. Laid
+        # on its side so it bores into the wall rather than standing in it.
+        from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+        from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+        radius = min(half, max(op.height, 1.0) / 2)
+        zc = (op.sill + op.head) / 2
+        base = gp_Pnt((sx + nx * mouth) * CM_TO_MM, (sy + ny * mouth) * CM_TO_MM,
+                      zc * CM_TO_MM)
+        axis = gp_Ax2(base, gp_Dir(-nx, -ny, 0.0))
+        return BRepPrimAPI_MakeCylinder(
+            axis, radius * CM_TO_MM, (mouth - back) * CM_TO_MM).Shape()
+
     corners = [
         (sx + tx * half + nx * back, sy + ty * half + ny * back),
         (sx - tx * half + nx * back, sy - ty * half + ny * back),
@@ -351,15 +366,17 @@ def _fitting_body(op: Opening, ring, cfg: BuildSettings, occ):
     # merely happen to touch instead of one body.
     bite = cm(cfg.socket_embed)
 
-    if op.kind == "boiler":
-        # A tank: round, upright, its back in the wall.
+    if op.solid_shape == "round":
+        # Upright and round, its back in the wall. The rectangle gives the
+        # diameter, the depth says how far it stands out, so the front of the
+        # cylinder lands on the shot the same way a box's face would.
         from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
         from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 
-        radius = min(depth, max(op.width, 1.0) / 2)
-        reach = max(radius - min(bite, radius / 2), 0.1)
-        base = gp_Pnt((sx + nx * reach) * CM_TO_MM,
-                      (sy + ny * reach) * CM_TO_MM, op.sill * CM_TO_MM)
+        radius = max(op.width, 1.0) / 2
+        centre = min(depth - radius, radius - bite)
+        base = gp_Pnt((sx + nx * centre) * CM_TO_MM,
+                      (sy + ny * centre) * CM_TO_MM, op.sill * CM_TO_MM)
         axis = gp_Ax2(base, gp_Dir(0.0, 0.0, 1.0))
         return BRepPrimAPI_MakeCylinder(
             axis, radius * CM_TO_MM, max(op.height, 1.0) * CM_TO_MM).Shape()

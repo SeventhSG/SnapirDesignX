@@ -96,6 +96,7 @@ Json to_json(const RoomOverride& ov) {
   j["face_thickness"] = ov.face_thickness;
   j["disabled_openings"] = ov.disabled_openings;
   j["opening_kind_overrides"] = ov.opening_kind_overrides;
+  j["opening_shape_overrides"] = ov.opening_shape_overrides;
   j["fixture_overrides"] = ov.fixture_overrides;
   j["role_overrides"] = ov.role_overrides;
   j["added_segments"] = ov.added_segments;
@@ -118,6 +119,8 @@ RoomOverride override_from_json(const Json& j) {
   ov.disabled_openings = get_or(j, "disabled_openings", std::vector<int>{});
   ov.opening_kind_overrides =
       get_or(j, "opening_kind_overrides", std::map<std::string, std::string>{});
+  ov.opening_shape_overrides =
+      get_or(j, "opening_shape_overrides", std::map<std::string, std::string>{});
   ov.fixture_overrides = get_or(j, "fixture_overrides", std::map<std::string, Json>{});
   ov.role_overrides = get_or(j, "role_overrides", std::map<std::string, std::string>{});
   ov.added_segments =

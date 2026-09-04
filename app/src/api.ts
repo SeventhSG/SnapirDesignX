@@ -44,6 +44,8 @@ export interface Opening {
   key: string;
   /** True when it is a hole. False when it is something mounted on the wall. */
   cuts: boolean;
+  /** How it is extruded: "box" or "round". */
+  shape: string;
 }
 
 /** What a rectangle on a wall is allowed to be. */
@@ -57,6 +59,7 @@ export interface Room {
   area: number; ceilingHeight: number | null; floorZ: number | null;
   outline: string[]; points: Point[]; openings: Opening[]; issues: Issue[];
   openingKinds: OpeningKind[];
+  shapes: string[];
   segments: [string, string][]; links: [string, string][];
   crossings: Crossing[]; elements: Element[];
   /** Set when this room overrides the job's wall thickness. */

@@ -63,6 +63,11 @@ bool kind_recesses(const std::string& kind);
 const std::vector<std::string>& opening_kinds();
 std::string kind_label(const std::string& kind);
 
+// How a fitting is extruded, which is a separate question from what it is: a
+// boiler is round, a panel is not, but plenty of things could be either and
+// only the operator can say. Blank means follow the kind.
+const std::vector<std::string>& shapes();
+
 // A rectangle on a wall: two jambs, a sill and a head.
 //
 // Doors and windows are holes. A boiler, a socket panel or a wall lamp is the
@@ -79,6 +84,16 @@ struct Opening {
   std::optional<double> out_depth;  // cm it stands into the room
   std::optional<double> in_depth;   // cm it is let back into the wall
   std::vector<std::string> depth_points;
+  // "box" or "round", or blank to follow the kind. The survey cannot tell a
+  // round tank from a square cupboard - both are four corners on a wall - so
+  // this is the operator's to set.
+  std::string shape;
+
+  // How this one is extruded. A tank is round unless told otherwise.
+  std::string solid_shape() const {
+    if (shape == "box" || shape == "round") return shape;
+    return kind == "boiler" ? "round" : "box";
+  }
 
   // True when the surveyor measured either side of this rectangle.
   bool measured() const { return out_depth.has_value() || in_depth.has_value(); }

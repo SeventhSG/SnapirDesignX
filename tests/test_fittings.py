@@ -319,3 +319,62 @@ def test_two_dots_survive_a_rebuild():
     op = room.openings[0]
     assert op.out_depth == pytest.approx(30.0, abs=0.01)
     assert op.in_depth == pytest.approx(7.0, abs=0.01)
+
+
+def test_a_boiler_is_round_and_a_panel_is_not_unless_told():
+    from snapir.model import Jamb, Opening
+
+    j = Jamb(0, 0, 0, 100)
+    assert Opening(left=j, right=j, kind="boiler").solid_shape == "round"
+    assert Opening(left=j, right=j, kind="panel").solid_shape == "box"
+    # And the operator overrules either way.
+    assert Opening(left=j, right=j, kind="boiler", shape="box").solid_shape == "box"
+    assert Opening(left=j, right=j, kind="lamp", shape="round").solid_shape == "round"
+
+
+def test_a_round_fitting_reaches_the_dot_like_a_box_does():
+    from snapir.solid import _fitting_body, _occ
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRepBndLib import BRepBndLib
+
+    cfg = BuildSettings()
+    occ = _occ()
+    for shape in ("box", "round"):
+        room = _room_with_depth_shot(off=40.0)
+        room.openings[0].shape = shape
+        ring = [p.xy for p in room.outline]
+        body = _fitting_body(room.openings[0], ring, cfg, occ)
+        box = Bnd_Box()
+        BRepBndLib.Add_s(body, box)
+        assert box.CornerMax().Y() / 10.0 == pytest.approx(40.0, abs=0.01), shape
+
+
+def test_round_and_square_are_different_bodies():
+    from snapir.solid import build_room, solid_stats
+
+    cfg = BuildSettings()
+    square = _room_with_depth_shot(off=40.0)
+    square.openings[0].shape = "box"
+    round_ = _room_with_depth_shot(off=40.0)
+    round_.openings[0].shape = "round"
+
+    a = solid_stats(build_room(square, cfg))
+    b = solid_stats(build_room(round_, cfg))
+    assert a["solids"] == b["solids"] == 1
+    # A cylinder inside the same rectangle carries less material than the box.
+    assert b["volume_m3"] < a["volume_m3"]
+
+
+def test_a_round_recess_bores_into_the_wall():
+    from snapir.solid import build_room, solid_stats
+
+    cfg = BuildSettings()
+    bare = _room_with_depth_shot(off=-9.0)
+    bare.openings = []
+    plain = solid_stats(build_room(bare, cfg))["volume_m3"]
+
+    room = _room_with_depth_shot(off=-9.0)
+    room.openings[0].shape = "round"
+    bored = solid_stats(build_room(room, cfg))
+    assert bored["solids"] == 1
+    assert bored["volume_m3"] < plain

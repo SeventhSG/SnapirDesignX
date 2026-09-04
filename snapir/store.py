@@ -34,6 +34,8 @@ class RoomOverride:
     # openings list: that list is rebuilt from scratch on every correction, so
     # an index silently comes to mean a different opening.
     opening_kind_overrides: dict[str, str] = field(default_factory=dict)
+    # Same keying: element key -> "box" | "round".
+    opening_shape_overrides: dict[str, str] = field(default_factory=dict)
     fixture_overrides: dict[str, dict] = field(default_factory=dict)
     role_overrides: dict[str, str] = field(default_factory=dict)  # point -> role
     added_segments: list[list[str]] = field(default_factory=list)

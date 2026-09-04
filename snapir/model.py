@@ -73,6 +73,11 @@ RECESS_KINDS = ("niche",)
 FITTING_KINDS = ("object", "boiler", "socket", "lamp", "panel", "empty")
 OPENING_KINDS = CUT_KINDS + RECESS_KINDS + FITTING_KINDS
 
+# How a fitting is extruded, which is a separate question from what it is: a
+# boiler is round, a panel is not, but plenty of things could be either and
+# only the operator can say. Blank means follow the kind.
+SHAPES = ("box", "round")
+
 # What each one is called on site, for the operator's own layer names.
 KIND_LABELS = {
     "door": "Door", "window": "Window",
@@ -106,6 +111,17 @@ class Opening:
     out_depth: Optional[float] = None   # cm it stands into the room
     in_depth: Optional[float] = None    # cm it is let back into the wall
     depth_points: list[str] = field(default_factory=list)
+    # "box" or "round", or blank to follow the kind. The survey cannot tell a
+    # round tank from a square cupboard - both are four corners on a wall - so
+    # this is the operator's to set.
+    shape: str = ""
+
+    @property
+    def solid_shape(self) -> str:
+        """How this one is extruded. A tank is round unless told otherwise."""
+        if self.shape in SHAPES:
+            return self.shape
+        return "round" if self.kind == "boiler" else "box"
 
     @property
     def measured(self) -> bool:
