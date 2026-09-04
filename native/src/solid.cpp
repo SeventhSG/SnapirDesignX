@@ -148,20 +148,8 @@ Pt mitre_vertex(const std::vector<Pt>& ring, size_t i, double dist) {
   return {p1.x + f1.tangent.x * s, p1.y + f1.tangent.y * s};
 }
 
-// Ray cast, replacing shapely's point-in-polygon. Orientation-independent, so
-// it does not care which way the ring was wound.
-bool point_in_polygon(const Pt& q, const std::vector<Pt>& ring) {
-  bool inside = false;
-  const size_t n = ring.size();
-  for (size_t i = 0, j = n - 1; i < n; j = i++) {
-    const Pt& a = ring[i];
-    const Pt& b = ring[j];
-    if ((a.y > q.y) != (b.y > q.y) &&
-        q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x)
-      inside = !inside;
-  }
-  return inside;
-}
+// point_in_polygon now lives in geometry, shared with the classifier: both
+// need to know which side of a wall the room is on.
 
 // Seat a surveyed point on its wall and return the inward normal.
 //
@@ -229,6 +217,33 @@ TopoDS_Shape removed_wall_opening(const std::vector<Pt>& ring, const Plane& floo
   op.right = {b.x, b.y, floor.z_at(b.x, b.y), ceiling.z_at(b.x, b.y), {}};
   op.kind = "removed";
   return opening_cutter(op, ring, cfg);
+}
+
+// A box that hollows the wall back to the depth, and no further.
+//
+// The mouth overshoots into the room so the opening is clean at the face; the
+// back stops exactly where the middle shot was. A doorway goes all the way
+// through the wall - this deliberately does not.
+TopoDS_Shape recess_cutter(const Opening& op, const std::vector<Pt>& ring,
+                           const BuildSettings& cfg) {
+  const double cx = (op.left.x + op.right.x) / 2;
+  const double cy = (op.left.y + op.right.y) / 2;
+  const WallFrame w = wall_frame(cx, cy, ring);
+
+  const double back = op.depth ? -std::fabs(*op.depth) : -cm(cfg.panel_depth);
+  const double mouth = cm(cfg.wall_thickness);  // overshoot, so the face cuts clean
+  const double half = std::max(op.width(), 1.0) / 2;
+  const std::vector<Pt> corners = {
+      {w.seat.x + w.tangent.x * half + w.normal.x * back,
+       w.seat.y + w.tangent.y * half + w.normal.y * back},
+      {w.seat.x - w.tangent.x * half + w.normal.x * back,
+       w.seat.y - w.tangent.y * half + w.normal.y * back},
+      {w.seat.x - w.tangent.x * half + w.normal.x * mouth,
+       w.seat.y - w.tangent.y * half + w.normal.y * mouth},
+      {w.seat.x + w.tangent.x * half + w.normal.x * mouth,
+       w.seat.y + w.tangent.y * half + w.normal.y * mouth},
+  };
+  return prism(corners, level_plane(op.sill()), level_plane(op.head()));
 }
 
 // The solid a wall rectangle stands up as, when it is not a hole.
@@ -674,9 +689,21 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
     }
   }
 
+  // A recess is hollowed out of the wall rather than punched through it, so it
+  // is cut whether or not doorways are being cut at all.
   if (cfg.include_fittings) {
     for (const auto& op : rects) {
-      if (op.cuts() || op.kind == "empty") continue;
+      if (!op.recesses()) continue;
+      BRepAlgoAPI_Cut c(shape, recess_cutter(op, inner_ring, cfg));
+      c.Build();
+      if (!c.IsDone()) throw BuildError(room.name + ": could not hollow out the recess");
+      shape = c.Shape();
+    }
+  }
+
+  if (cfg.include_fittings) {
+    for (const auto& op : rects) {
+      if (op.cuts() || op.recesses() || op.kind == "empty") continue;
       TopoDS_Shape body;
       try {
         body = fitting_body(op, inner_ring, cfg);

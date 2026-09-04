@@ -57,6 +57,9 @@ struct Jamb {
 // set. Doors and windows are cut through the wall; the others are fittings
 // that hang on it and stand out into the room.
 bool kind_cuts(const std::string& kind);
+// A niche is neither hole nor fitting: the wall is cut back to the depth
+// that was measured and no further, so the wall behind it survives.
+bool kind_recesses(const std::string& kind);
 const std::vector<std::string>& opening_kinds();
 std::string kind_label(const std::string& kind);
 
@@ -79,6 +82,8 @@ struct Opening {
   double height() const { return head() - sill(); }
   // True when this rectangle is a hole rather than a fitting.
   bool cuts() const { return kind_cuts(kind); }
+  // True when the wall is cut back to the depth, but not through.
+  bool recesses() const { return kind_recesses(kind); }
   double width() const {
     const double dx = left.x - right.x, dy = left.y - right.y;
     return std::sqrt(dx * dx + dy * dy);

@@ -67,13 +67,17 @@ class Jamb:
 # set. Doors and windows are cut through the wall; the others are fittings
 # that hang on it and stand out into the room.
 CUT_KINDS = ("door", "window")
+# A niche is neither: the wall is cut back to the depth that was measured and
+# no further, so the wall behind it survives.
+RECESS_KINDS = ("niche",)
 FITTING_KINDS = ("object", "boiler", "socket", "lamp", "panel", "empty")
-OPENING_KINDS = CUT_KINDS + FITTING_KINDS
+OPENING_KINDS = CUT_KINDS + RECESS_KINDS + FITTING_KINDS
 
 # What each one is called on site, for the operator's own layer names.
 KIND_LABELS = {
     "door": "Door", "window": "Window",
     "object": "Object on the wall",
+    "niche": "Recess in the wall",
     "boiler": "Boiler",          # бойлер
     "socket": "Socket",          # щепсел
     "lamp": "Wall lamp",         # лампа
@@ -101,8 +105,13 @@ class Opening:
 
     @property
     def cuts(self) -> bool:
-        """True when this rectangle is a hole rather than a fitting."""
+        """True when this rectangle goes clean through the wall."""
         return self.kind in CUT_KINDS or self.kind == "unknown"
+
+    @property
+    def recesses(self) -> bool:
+        """True when the wall is cut back to the depth, but not through."""
+        return self.kind in RECESS_KINDS
 
     @property
     def height(self) -> float:

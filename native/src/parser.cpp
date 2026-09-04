@@ -296,6 +296,9 @@ void detect_pervaz(Room& room) {
 //
 // Without one the fitting still builds, on the depth in settings.
 void attach_depth_points(Room& room) {
+  std::vector<Pt> ring;
+  for (const auto& p : room.outline) ring.push_back(xy(p));
+
   for (auto& op : room.openings) {
     const double ax = op.left.x, ay = op.left.y;
     const double dx = op.right.x - ax, dy = op.right.y - ay;
@@ -303,16 +306,31 @@ void attach_depth_points(Room& room) {
     if (length < 1.0) continue;
     const double tx = dx / length, ty = dy / length;
 
+    // Point the normal into the room, so "positive" means the same thing on
+    // every wall however the ring happened to be wound.
+    double nx = -ty, ny = tx;
+    if (ring.size() >= 3) {
+      const Pt mid{(ax + op.right.x) / 2, (ay + op.right.y) / 2};
+      if (!point_in_polygon({mid.x + nx * 0.5, mid.y + ny * 0.5}, ring)) {
+        nx = -nx;
+        ny = -ny;
+      }
+    }
+
     Point* best = nullptr;
     double best_off = 0.0;
     for (auto& p : room.points) {
-      if (p.role != Role::Unknown || p.pinned) continue;
+      // Already-tagged depth shots are candidates too. After the first pass
+      // the shot is no longer Unknown, and a detector that could not see it
+      // would fail to re-attach on the next rebuild - which turned the object
+      // straight back into a hole on the operator's first correction.
+      if ((p.role != Role::Unknown && p.role != Role::Depth) || p.pinned) continue;
       if (!(p.z >= op.sill() && p.z <= op.head())) continue;
       const double along = (p.x - ax) * tx + (p.y - ay) * ty;
       if (along < -kDepthEdgeTol || along > length + kDepthEdgeTol) continue;
-      const double off = std::fabs((p.x - ax) * -ty + (p.y - ay) * tx);
-      if (off < kDepthMin || off > kDepthMax) continue;
-      if (!best || off < best_off) {
+      const double off = (p.x - ax) * nx + (p.y - ay) * ny;
+      if (std::fabs(off) < kDepthMin || std::fabs(off) > kDepthMax) continue;
+      if (!best || std::fabs(off) < std::fabs(best_off)) {
         best = &p;
         best_off = off;
       }
@@ -327,7 +345,7 @@ void attach_depth_points(Room& room) {
       // standing on the wall - and the wall behind it stays whole. An
       // operator's own choice still overrides this later.
       if (op.kind == "door" || op.kind == "window" || op.kind == "unknown")
-        op.kind = "object";
+        op.kind = best_off > 0 ? "object" : "niche";
     }
   }
 }

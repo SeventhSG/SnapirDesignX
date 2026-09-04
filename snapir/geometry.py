@@ -79,6 +79,21 @@ def project_onto_edges(pt: Pt, ring: list[Pt]) -> tuple[int, Pt, float]:
     return best
 
 
+def point_in_polygon(q: Pt, ring: list[Pt]) -> bool:
+    """Ray cast. Orientation-independent, so it does not care which way the
+    ring was wound - which the topology walk does not guarantee."""
+    inside = False
+    n = len(ring)
+    j = n - 1
+    for i in range(n):
+        a, b = ring[i], ring[j]
+        crosses_y = (a[1] > q[1]) != (b[1] > q[1])
+        if crosses_y and q[0] < (b[0] - a[0]) * (q[1] - a[1]) / (b[1] - a[1]) + a[0]:
+            inside = not inside
+        j = i
+    return inside
+
+
 def line_intersection(a: Pt, b: Pt, c: Pt, d: Pt) -> Pt | None:
     """Where the infinite lines through a-b and c-d meet.
 

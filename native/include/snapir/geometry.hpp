@@ -34,6 +34,10 @@ Projection project_onto_edges(const Pt& pt, const std::vector<Pt>& ring);
 
 double dist(const Pt& a, const Pt& b);
 
+// Ray cast. Orientation-independent, so it does not care which way the ring
+// was wound - which the topology walk does not guarantee.
+bool point_in_polygon(const Pt& q, const std::vector<Pt>& ring);
+
 // Where the infinite lines through a-b and c-d meet.
 //
 // Infinite, not segment-bounded, because the useful case is two wall runs that

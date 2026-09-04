@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .model import (Issue, Jamb, Opening, Pervaz, Point, Project, Role, Room,
                     Stair)
+from .geometry import point_in_polygon
 from .topology import build as build_topology, read_segments
 
 # Layer names as written by iCON trades, and what they mean.
@@ -325,13 +326,19 @@ DEPTH_EDGE_TOL = 5.0     # cm the shot may sit outside the rectangle's width
 def _attach_depth_points(room: Room) -> None:
     """Give every rectangle the depth its middle shot measured.
 
-    The surveyor marks a thing that sticks out of the wall by shooting the
-    rectangle and then one point in the middle of it. The distance from that
-    point to the wall is how far the thing stands out - measured, not assumed,
-    which is the whole reason to take the shot.
+    The surveyor marks a thing on the wall by shooting the rectangle and then
+    one point in the middle of it. How far that point sits off the wall is how
+    deep the thing is - measured, not assumed, which is the whole reason to
+    take the shot.
 
-    Without one the fitting still builds, on the depth in settings.
+    Which side it sits on is the other half of the answer. A shot standing into
+    the room is a thing mounted on the wall; a shot behind the wall face is a
+    recess cut back into it. So the depth is kept signed, positive into the
+    room, and the sign decides whether material is added or taken away.
+
+    Without a middle shot the fitting still builds, on the depth in settings.
     """
+    ring = [p.xy for p in room.outline]
     for op in room.openings:
         ax, ay = op.left.x, op.left.y
         bx, by = op.right.x, op.right.y
@@ -341,19 +348,32 @@ def _attach_depth_points(room: Room) -> None:
             continue
         tx, ty = dx / length, dy / length
 
+        # Point the normal into the room, so "positive" means the same thing on
+        # every wall however the ring happened to be wound.
+        nx, ny = -ty, tx
+        if len(ring) >= 3:
+            mid = ((ax + bx) / 2, (ay + by) / 2)
+            if not point_in_polygon((mid[0] + nx * 0.5, mid[1] + ny * 0.5), ring):
+                nx, ny = -nx, -ny
+
         best: tuple[float, Point] | None = None
         for p in room.points:
-            if p.role is not Role.UNKNOWN or p.pinned:
+            # Already-tagged depth shots are candidates too. After the first
+            # pass the shot is no longer UNKNOWN, and a detector that could not
+            # see it would fail to re-attach on the next rebuild - which turned
+            # the object straight back into a hole on the operator's first
+            # correction.
+            if p.role not in (Role.UNKNOWN, Role.DEPTH) or p.pinned:
                 continue
             if not (op.sill <= p.z <= op.head):
                 continue
             along = (p.x - ax) * tx + (p.y - ay) * ty
             if not (-DEPTH_EDGE_TOL <= along <= length + DEPTH_EDGE_TOL):
                 continue
-            off = abs((p.x - ax) * -ty + (p.y - ay) * tx)
-            if not (DEPTH_MIN <= off <= DEPTH_MAX):
+            off = (p.x - ax) * nx + (p.y - ay) * ny
+            if not (DEPTH_MIN <= abs(off) <= DEPTH_MAX):
                 continue
-            if best is None or off < best[0]:
+            if best is None or abs(off) < abs(best[0]):
                 best = (off, p)
 
         if best is not None:
@@ -361,10 +381,11 @@ def _attach_depth_points(room: Room) -> None:
             best[1].role = Role.DEPTH
             # The shot itself says what this is. Nobody measures how far a
             # doorway sticks out of a wall, so a rectangle with a depth shot is
-            # a thing standing on the wall - and the wall behind it stays
-            # whole. An operator's own choice still overrides this later.
+            # a thing on the wall rather than a hole through it - standing in
+            # the room, or set back into the wall. An operator's own choice
+            # still overrides this later.
             if op.kind in ("door", "window", "unknown"):
-                op.kind = "object"
+                op.kind = "object" if best[0] > 0 else "niche"
 
 
 def _step_move(a: Point, b: Point) -> str | None:

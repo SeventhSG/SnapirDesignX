@@ -102,6 +102,19 @@ Projection project_onto_edges(const Pt& pt, const std::vector<Pt>& ring) {
   return best;
 }
 
+bool point_in_polygon(const Pt& q, const std::vector<Pt>& ring) {
+  bool inside = false;
+  const size_t n = ring.size();
+  for (size_t i = 0, j = n - 1; i < n; j = i++) {
+    const Pt& a = ring[i];
+    const Pt& b = ring[j];
+    if ((a.y > q.y) != (b.y > q.y) &&
+        q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x)
+      inside = !inside;
+  }
+  return inside;
+}
+
 std::optional<Pt> line_intersection(const Pt& a, const Pt& b, const Pt& c,
                                     const Pt& d) {
   const double rx = b.x - a.x, ry = b.y - a.y;

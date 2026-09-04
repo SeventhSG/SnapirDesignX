@@ -238,8 +238,19 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
                 raise BuildError(f"{room.name}: opening cut failed")
             shape = c.Shape()
 
+    # A recess is hollowed out of the wall rather than punched through it, so
+    # it is cut whether or not doorways are being cut at all.
     if cfg.include_fittings:
-        for op in (o for o in rects if not o.cuts and o.kind != "empty"):
+        for op in (o for o in rects if o.recesses):
+            c = occ["Cut"](shape, _recess_cutter(op, inner_ring, cfg, occ))
+            c.Build()
+            if not c.IsDone():
+                raise BuildError(f"{room.name}: could not hollow out the recess")
+            shape = c.Shape()
+
+    if cfg.include_fittings:
+        for op in (o for o in rects
+                   if not o.cuts and not o.recesses and o.kind != "empty"):
             try:
                 body = _fitting_body(op, inner_ring, cfg, occ)
             except (BuildError, RuntimeError):
@@ -286,6 +297,28 @@ def _removed_wall_opening(ring, floor: Plane, ceiling: Plane, i: int,
     left = Jamb(x=ax, y=ay, z_bottom=floor.z_at(ax, ay), z_top=ceiling.z_at(ax, ay))
     right = Jamb(x=bx, y=by, z_bottom=floor.z_at(bx, by), z_top=ceiling.z_at(bx, by))
     return _opening_cutter(Opening(left=left, right=right, kind="removed"), ring, cfg, occ)
+
+
+def _recess_cutter(op: Opening, ring, cfg: BuildSettings, occ):
+    """A box that hollows the wall back to the depth, and no further.
+
+    The mouth overshoots into the room so the opening is clean at the face; the
+    back stops exactly where the middle shot was. A doorway goes all the way
+    through the wall - this deliberately does not.
+    """
+    cx, cy = (op.left.x + op.right.x) / 2, (op.left.y + op.right.y) / 2
+    (sx, sy), (nx, ny), (tx, ty), _dist = _wall_frame(cx, cy, ring)
+
+    back = -abs(op.depth) if op.depth else -cm(cfg.panel_depth)
+    mouth = cm(cfg.wall_thickness)      # overshoot into the room, cut cleanly
+    half = max(op.width, 1.0) / 2
+    corners = [
+        (sx + tx * half + nx * back, sy + ty * half + ny * back),
+        (sx - tx * half + nx * back, sy - ty * half + ny * back),
+        (sx - tx * half + nx * mouth, sy - ty * half + ny * mouth),
+        (sx + tx * half + nx * mouth, sy + ty * half + ny * mouth),
+    ]
+    return _prism(corners, level_plane(op.sill), level_plane(op.head), occ)
 
 
 def _fitting_body(op: Opening, ring, cfg: BuildSettings, occ):
