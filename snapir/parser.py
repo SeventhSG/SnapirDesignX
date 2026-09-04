@@ -227,6 +227,9 @@ def _classify(room: Room) -> None:
         op.infer_kind(door_sill_max=floor_z + 20.0)
         room.openings.append(op)
 
+    # Depth shots first: they sit inside a rectangle and would otherwise be
+    # loose UNKNOWN points for the stair scan to trip over.
+    _attach_depth_points(room)
     _detect_stairs(room)
     room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
 
@@ -310,6 +313,52 @@ def _detect_pervaz(room: Room) -> None:
             taken.add(a.name)
             taken.add(b.name)
             break
+
+
+# A shot in the middle of a wall rectangle, standing off the wall. Nothing else
+# lands inside a rectangle's own span at its own height.
+DEPTH_MAX = 200.0        # cm; further out than this is not a fitting on a wall
+DEPTH_MIN = 0.5          # cm; closer than this is a shot on the wall itself
+DEPTH_EDGE_TOL = 5.0     # cm the shot may sit outside the rectangle's width
+
+
+def _attach_depth_points(room: Room) -> None:
+    """Give every rectangle the depth its middle shot measured.
+
+    The surveyor marks a thing that sticks out of the wall by shooting the
+    rectangle and then one point in the middle of it. The distance from that
+    point to the wall is how far the thing stands out - measured, not assumed,
+    which is the whole reason to take the shot.
+
+    Without one the fitting still builds, on the depth in settings.
+    """
+    for op in room.openings:
+        ax, ay = op.left.x, op.left.y
+        bx, by = op.right.x, op.right.y
+        dx, dy = bx - ax, by - ay
+        length = (dx * dx + dy * dy) ** 0.5
+        if length < 1.0:
+            continue
+        tx, ty = dx / length, dy / length
+
+        best: tuple[float, Point] | None = None
+        for p in room.points:
+            if p.role is not Role.UNKNOWN or p.pinned:
+                continue
+            if not (op.sill <= p.z <= op.head):
+                continue
+            along = (p.x - ax) * tx + (p.y - ay) * ty
+            if not (-DEPTH_EDGE_TOL <= along <= length + DEPTH_EDGE_TOL):
+                continue
+            off = abs((p.x - ax) * -ty + (p.y - ay) * tx)
+            if not (DEPTH_MIN <= off <= DEPTH_MAX):
+                continue
+            if best is None or off < best[0]:
+                best = (off, p)
+
+        if best is not None:
+            op.depth, op.depth_point = best[0], best[1].name
+            best[1].role = Role.DEPTH
 
 
 def _step_move(a: Point, b: Point) -> str | None:
@@ -559,6 +608,9 @@ def rebuild(room: Room) -> None:
             op.infer_kind(door_sill_max=floor_z + 20.0)
             room.openings.append(op)
 
+    # Depth shots first: they sit inside a rectangle and would otherwise be
+    # loose UNKNOWN points for the stair scan to trip over.
+    _attach_depth_points(room)
     _detect_stairs(room)
     room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
 
@@ -567,7 +619,7 @@ def rebuild(room: Room) -> None:
 
 
 ASSIGNABLE = ("floor", "ceiling", "opening", "socket", "plumbing",
-              "control", "unknown", "stairs", "pervaz")
+              "control", "unknown", "stairs", "pervaz", "depth")
 
 
 def apply_roles(room: Room, roles: dict[str, str]) -> None:
@@ -667,6 +719,9 @@ def _from_drawn_lines(room: Room) -> bool:
             for q in a.points + b.points:
                 q.role = Role.OPENING
 
+    # Depth shots first: they sit inside a rectangle and would otherwise be
+    # loose UNKNOWN points for the stair scan to trip over.
+    _attach_depth_points(room)
     _detect_stairs(room)
     room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
 

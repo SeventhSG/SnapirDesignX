@@ -287,6 +287,45 @@ void detect_pervaz(Room& room) {
   }
 }
 
+// Give every rectangle the depth its middle shot measured.
+//
+// The surveyor marks a thing that sticks out of the wall by shooting the
+// rectangle and then one point in the middle of it. The distance from that
+// point to the wall is how far the thing stands out - measured, not assumed,
+// which is the whole reason to take the shot.
+//
+// Without one the fitting still builds, on the depth in settings.
+void attach_depth_points(Room& room) {
+  for (auto& op : room.openings) {
+    const double ax = op.left.x, ay = op.left.y;
+    const double dx = op.right.x - ax, dy = op.right.y - ay;
+    const double length = std::sqrt(dx * dx + dy * dy);
+    if (length < 1.0) continue;
+    const double tx = dx / length, ty = dy / length;
+
+    Point* best = nullptr;
+    double best_off = 0.0;
+    for (auto& p : room.points) {
+      if (p.role != Role::Unknown || p.pinned) continue;
+      if (!(p.z >= op.sill() && p.z <= op.head())) continue;
+      const double along = (p.x - ax) * tx + (p.y - ay) * ty;
+      if (along < -kDepthEdgeTol || along > length + kDepthEdgeTol) continue;
+      const double off = std::fabs((p.x - ax) * -ty + (p.y - ay) * tx);
+      if (off < kDepthMin || off > kDepthMax) continue;
+      if (!best || off < best_off) {
+        best = &p;
+        best_off = off;
+      }
+    }
+
+    if (best) {
+      op.depth = best_off;
+      op.depth_point = best->name;
+      best->role = Role::Depth;
+    }
+  }
+}
+
 // What one shot-to-shot move is, if it is part of a flight at all.
 //
 // Two ways a surveyor traces a staircase, and the app must not care which:
@@ -527,6 +566,9 @@ bool from_drawn_lines(Room& room) {
     }
   }
 
+  // Depth shots first: they sit inside a rectangle and would otherwise be
+  // loose Unknown points for the stair scan to trip over.
+  attach_depth_points(room);
   detect_stairs(room);
   room.stairs = group_stairs(room);
 
@@ -640,6 +682,9 @@ void classify(Room& room) {
     room.openings.push_back(op);
   }
 
+  // Depth shots first: they sit inside a rectangle and would otherwise be
+  // loose Unknown points for the stair scan to trip over.
+  attach_depth_points(room);
   detect_stairs(room);
   room.stairs = group_stairs(room);
 
@@ -804,6 +849,9 @@ void rebuild(Room& room) {
     }
   }
 
+  // Depth shots first: they sit inside a rectangle and would otherwise be
+  // loose Unknown points for the stair scan to trip over.
+  attach_depth_points(room);
   detect_stairs(room);
   room.stairs = group_stairs(room);
 
@@ -819,7 +867,7 @@ void rebuild(Room& room) {
 void apply_roles(Room& room, const std::map<std::string, std::string>& roles) {
   static const std::set<std::string> assignable = {
       "floor", "ceiling", "opening",  "socket",
-      "plumbing", "control", "unknown", "stairs", "pervaz"};
+      "plumbing", "control", "unknown", "stairs", "pervaz", "depth"};
   for (auto& p : room.points) {
     const auto it = roles.find(p.name);
     if (it != roles.end() && assignable.count(it->second)) {

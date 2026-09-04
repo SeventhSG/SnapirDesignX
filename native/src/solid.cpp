@@ -243,9 +243,13 @@ TopoDS_Shape fitting_body(const Opening& op, const std::vector<Pt>& ring,
   const double cy = (op.left.y + op.right.y) / 2;
   const WallFrame w = wall_frame(cx, cy, ring);
 
-  const double depth = op.kind == "boiler"  ? cm(cfg.boiler_depth)
-                       : op.kind == "lamp"  ? cm(cfg.lamp_depth)
-                                            : cm(cfg.panel_depth);
+  // A shot in the middle of the rectangle measured how far the thing sticks
+  // out. Where the surveyor took one it wins outright; the settings are only
+  // for rectangles nobody measured the depth of.
+  const double depth = op.depth ? *op.depth
+                       : op.kind == "boiler" ? cm(cfg.boiler_depth)
+                       : op.kind == "lamp"   ? cm(cfg.lamp_depth)
+                                             : cm(cfg.panel_depth);
   // Every fitting reaches a little way into the wall. Sitting exactly on the
   // surface looks right and fuses badly: a round tank touching a flat wall
   // meets it along a single line, and the kernel hands back two solids that

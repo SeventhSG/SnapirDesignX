@@ -49,7 +49,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.1";
+constexpr const char* kVersion = "1.3.2";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -505,7 +505,10 @@ Json room_json(const Room& room, const RoomOverride* ov,
                             // operator's choice of what it really is survives a
                             // rebuild.
                             {"key", opening_key(o)},
-                            {"cuts", o.cuts()}});
+                            {"cuts", o.cuts()},
+                            // Measured off the middle shot, when there is one.
+                            {"depth", o.depth ? Json(round_to(*o.depth, 1)) : Json()},
+                            {"depthPoint", o.depth_point}});
   }
   j["openings"] = openings;
 

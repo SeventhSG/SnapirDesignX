@@ -299,8 +299,12 @@ def _fitting_body(op: Opening, ring, cfg: BuildSettings, occ):
     cx, cy = (op.left.x + op.right.x) / 2, (op.left.y + op.right.y) / 2
     (sx, sy), (nx, ny), (tx, ty), _dist = _wall_frame(cx, cy, ring)
 
-    depth = {"boiler": cm(cfg.boiler_depth), "lamp": cm(cfg.lamp_depth)}.get(
-        op.kind, cm(cfg.panel_depth))
+    # A shot in the middle of the rectangle measured how far the thing sticks
+    # out. Where the surveyor took one it wins outright; the settings are only
+    # for rectangles nobody measured the depth of.
+    depth = op.depth if op.depth else {
+        "boiler": cm(cfg.boiler_depth), "lamp": cm(cfg.lamp_depth),
+    }.get(op.kind, cm(cfg.panel_depth))
     # Every fitting reaches a little way into the wall. Sitting exactly on the
     # surface looks right and fuses badly: a round tank touching a flat wall
     # meets it along a single line, and the kernel hands back two solids that

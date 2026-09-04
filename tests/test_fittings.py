@@ -94,3 +94,54 @@ def test_a_fitting_is_clickable_and_keeps_its_name():
     # "this one is a boiler" stick.
     again = _room_with_rectangle()
     assert opening_key(again.openings[0]) == key
+
+
+def _room_with_depth_shot(off: float = 35.0):
+    """The same rectangle, plus the middle shot that measures how far it
+    stands out of the wall."""
+    rows = ["Kimlik;X (cm);Y (cm);Z (cm);Katman"]
+    for i, (x, y) in enumerate([(0, 0), (400, 0), (400, 300), (0, 300)], 1):
+        rows.append(f"P_{i:03d};{x:.2f};{y:.2f};0.00;Zemin")
+    for i, (x, y) in enumerate([(0, 0), (400, 0), (400, 300), (0, 300)], 5):
+        rows.append(f"P_{i:03d};{x:.2f};{y:.2f};280.00;")
+    n = 9
+    for x in (150.0, 210.0):
+        for z in (120.0, 220.0):
+            rows.append(f"P_{n:03d};{x:.2f};0.00;{z:.2f};Katman 0")
+            n += 1
+    # In the middle of the rectangle, standing `off` cm into the room.
+    rows.append(f"P_{n:03d};180.00;{off:.2f};170.00;Katman 0")
+    p = Path(tempfile.mkdtemp()) / "Depth.csv"
+    p.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return read_room(p)
+
+
+def test_the_middle_shot_measures_the_depth():
+    room = _room_with_depth_shot(off=35.0)
+    assert len(room.openings) == 1
+    op = room.openings[0]
+    assert op.depth == pytest.approx(35.0, abs=0.01)
+    assert op.depth_point == "P_013"
+
+    # And it stops being an unresolved shot the operator has to look at.
+    assert not any(i.code == "unclassified" for i in room.issues)
+
+
+def test_a_measured_depth_beats_the_setting():
+    from snapir.solid import build_room, solid_stats
+
+    cfg = BuildSettings()
+    shallow = _room_with_depth_shot(off=10.0)
+    deep = _room_with_depth_shot(off=60.0)
+    for r in (shallow, deep):
+        r.openings[0].kind = "panel"
+
+    a = solid_stats(build_room(shallow, cfg))["volume_m3"]
+    b = solid_stats(build_room(deep, cfg))["volume_m3"]
+    # Same rectangle, same kind, same settings - only the measurement differs.
+    assert b > a
+
+
+def test_without_a_middle_shot_the_setting_is_used():
+    room = _room_with_rectangle()
+    assert room.openings[0].depth is None

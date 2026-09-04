@@ -18,6 +18,7 @@ enum class Role {
   Station,   // instrument position
   Stairs,    // one shot of a climbed flight
   Pervaz,    // the wall shot of a skirting pair
+  Depth,     // the middle shot giving a wall fitting its depth
   Unknown,   // needs a human decision
 };
 
@@ -67,6 +68,11 @@ std::string kind_label(const std::string& kind);
 struct Opening {
   Jamb left, right;
   std::string kind = "unknown";  // one of opening_kinds(), inferred or set by the user
+  // A shot in the middle of the rectangle, standing off the wall: how far the
+  // thing actually sticks out. Measured, so it beats any setting. Unset when
+  // the surveyor did not take one, and then the settings' depth is used.
+  std::optional<double> depth;  // cm
+  std::string depth_point;
 
   double sill() const { return std::min(left.z_bottom, right.z_bottom); }
   double head() const { return std::max(left.z_top, right.z_top); }

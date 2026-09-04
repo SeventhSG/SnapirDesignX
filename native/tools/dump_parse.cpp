@@ -76,7 +76,8 @@ int main(int argc, char** argv) {
       emit(n, "opening[" + std::to_string(i) + "]",
            o.kind + " w=" + num(o.width()) + " sill=" + num(o.sill()) +
                " head=" + num(o.head()) + " L=" + num(o.left.x) + "," + num(o.left.y) +
-               " R=" + num(o.right.x) + "," + num(o.right.y));
+               " R=" + num(o.right.x) + "," + num(o.right.y) +
+               " depth=" + (o.depth ? num(*o.depth) : std::string("-")));
     }
     // Flights and skirtings, spelled out rather than counted. Two cores can tag
     // the same points and still split them into different flights, and a bare

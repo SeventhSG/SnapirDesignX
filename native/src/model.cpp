@@ -14,6 +14,7 @@ const char* to_string(Role r) {
     case Role::Station: return "station";
     case Role::Stairs: return "stairs";
     case Role::Pervaz: return "pervaz";
+    case Role::Depth: return "depth";
     default: return "unknown";
   }
 }
@@ -28,6 +29,7 @@ Role role_from_string(const std::string& s) {
   if (s == "station") return Role::Station;
   if (s == "stairs") return Role::Stairs;
   if (s == "pervaz") return Role::Pervaz;
+  if (s == "depth") return Role::Depth;
   return Role::Unknown;
 }
 

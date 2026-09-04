@@ -46,6 +46,12 @@ inline constexpr double kPervazDepthMax = 8.0;
 inline constexpr double kPervazHeightMin = 3.0;
 inline constexpr double kPervazHeightMax = 30.0;
 
+// A shot in the middle of a wall rectangle, standing off the wall. Nothing
+// else lands inside a rectangle's own span at its own height.
+inline constexpr double kDepthMax = 200.0;      // cm
+inline constexpr double kDepthMin = 0.5;        // cm
+inline constexpr double kDepthEdgeTol = 5.0;    // cm outside the width
+
 // Parse one room CSV into a classified Room.
 Room read_room(const std::string& path);
 

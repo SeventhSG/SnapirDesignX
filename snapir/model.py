@@ -21,6 +21,7 @@ class Role(str, Enum):
     STATION = "station"      # instrument position
     STAIRS = "stairs"        # one nosing of a climbed flight
     PERVAZ = "pervaz"        # the floor-level shot of a skirting pair
+    DEPTH = "depth"          # the middle shot that gives a wall fitting its depth
     UNKNOWN = "unknown"      # needs a human decision
 
 
@@ -91,6 +92,11 @@ class Opening:
     left: Jamb
     right: Jamb
     kind: str = "unknown"    # one of OPENING_KINDS, inferred or set by the user
+    # A shot in the middle of the rectangle, standing off the wall: how far the
+    # thing actually sticks out. Measured, so it beats any setting. None when
+    # the surveyor did not take one, and then the settings' depth is used.
+    depth: Optional[float] = None      # cm
+    depth_point: str = ""
 
     @property
     def cuts(self) -> bool:
