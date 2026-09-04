@@ -11,10 +11,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .model import Room
+from .model import Role, Room
 from .solid import CM_TO_MM, BuildError
 
 _SUFFIX = {"iges": ".igs", "step": ".stp", "asc": ".asc"}
+
+# Half-arm of the cross drawn through a single shot, centimetres.
+MARK = 5.0
 
 
 def export_curves(room: Room, out_dir: str | Path, fmt: str = "iges") -> Path:
@@ -58,12 +61,84 @@ def _rings(room: Room):
             (ax, ay, op.sill), (bx, by, op.sill),
             (bx, by, op.head), (ax, ay, op.head), (ax, ay, op.sill),
         ])
+        rings.extend(_depth_box(op, ring))
+
+    # A flight is the line the surveyor walked up, nosing by nosing. Handing
+    # over the room without it leaves the stairs to be drawn again from the
+    # loose points, which is the work the survey already did.
+    for flight in room.stairs:
+        if len(flight.points) >= 2:
+            rings.append([(p.x, p.y, p.z) for p in flight.points])
+
+    # Skirting: the pair that measured one board, as the diagonal it was shot
+    # as. Two points, so it reads as the depth and height it is.
+    for v in room.pervaz:
+        rings.append([(v.corner.x, v.corner.y, v.corner.z),
+                      (v.wall.x, v.wall.y, v.wall.z)])
+
+    # A single shot is written as an IGES point as well, which is the exact
+    # thing. The cross is for STEP, whose writer drops a loose vertex on the
+    # floor: three short lines through the shot, so it arrives either way.
+    for x, y, z in _vertices(room):
+        rings.append([(x - MARK, y, z), (x + MARK, y, z)])
+        rings.append([(x, y - MARK, z), (x, y + MARK, z)])
+        rings.append([(x, y, z - MARK), (x, y, z + MARK)])
     return rings
+
+
+def _depth_box(op, ring) -> list[list[tuple[float, float, float]]]:
+    """The wireframe of what a measured rectangle actually becomes.
+
+    A shot in the middle of a rectangle says how far the thing standing on the
+    wall reaches, and that is the one number the drawing cannot show on its
+    own: the rectangle looks identical whether the boiler is 8 cm deep or 40.
+    So the far face is drawn where the shot put it, joined back to the
+    rectangle corner by corner - a box, in the round, at the measured depth.
+    """
+    from .solid import _wall_frame
+
+    out: list[list[tuple[float, float, float]]] = []
+    if not op.measured or len(ring) < 3:
+        return out
+
+    cx, cy = (op.left.x + op.right.x) / 2, (op.left.y + op.right.y) / 2
+    try:
+        _seat, (nx, ny), _t, _d = _wall_frame(cx, cy, list(ring))
+    except Exception:
+        return out
+
+    for depth in (op.out_depth, -op.in_depth if op.in_depth else None):
+        if not depth:
+            continue
+        dx, dy = nx * depth, ny * depth
+        face = [(op.left.x + dx, op.left.y + dy, op.sill),
+                (op.right.x + dx, op.right.y + dy, op.sill),
+                (op.right.x + dx, op.right.y + dy, op.head),
+                (op.left.x + dx, op.left.y + dy, op.head)]
+        out.append(face + [face[0]])
+        for (fx, fy, fz), (bx, by) in zip(face, [
+                (op.left.x, op.left.y), (op.right.x, op.right.y),
+                (op.right.x, op.right.y), (op.left.x, op.left.y)]):
+            out.append([(bx, by, fz), (fx, fy, fz)])
+    return out
+
+
+def _vertices(room: Room) -> list[tuple[float, float, float]]:
+    """Points that have to survive the handover on their own.
+
+    The depth shots above all: they are single points, so no polyline carries
+    them, and a room exported without them arrives in Design X with every
+    rectangle looking flat against the wall. The instrument's own stations go
+    too - they are where the panoramas were taken from.
+    """
+    keep = [p for p in room.points
+            if p.role in (Role.DEPTH, Role.SOCKET, Role.PLUMBING)]
+    return [(p.x, p.y, p.z) for p in keep + room.stations]
 
 
 def _write_curves(room: Room, path: Path, fmt: str) -> Path:
     from OCP.BRep import BRep_Builder
-    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeVertex
     from OCP.gp import gp_Pnt
     from OCP.TopoDS import TopoDS_Compound
 
@@ -72,12 +147,22 @@ def _write_curves(room: Room, path: Path, fmt: str) -> Path:
     builder.MakeCompound(compound)
 
     for ring in _rings(room):
+        if len(ring) < 2:
+            continue
         poly = BRepBuilderAPI_MakePolygon()
         for x, y, z in ring:
             poly.Add(gp_Pnt(x * CM_TO_MM, y * CM_TO_MM, z * CM_TO_MM))
-        if ring[0] != ring[-1]:
+        # An open run - a flight of stairs, a skirting pair - is a line, not a
+        # loop. Closing it would draw a wall that was never measured.
+        if len(ring) > 2 and ring[0] != ring[-1]:
             poly.Close()
         builder.Add(compound, poly.Wire())
+
+    # Single shots, as points. Design X shows a vertex where the instrument
+    # stood; a wire cannot carry one.
+    for x, y, z in _vertices(room):
+        builder.Add(compound, BRepBuilderAPI_MakeVertex(
+            gp_Pnt(x * CM_TO_MM, y * CM_TO_MM, z * CM_TO_MM)).Vertex())
 
     if fmt == "iges":
         from OCP.IGESControl import IGESControl_Controller, IGESControl_Writer

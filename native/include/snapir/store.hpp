@@ -44,6 +44,14 @@ struct RoomOverride {
   // Points the operator constructed rather than measured: a run extended to the
   // corner it stops short of, or where two runs cross.
   std::vector<Json> derived_points;
+  // Points the operator moved by hand, name -> [x, y, z] in survey
+  // centimetres. The CSV is never touched, so the shot as taken is always one
+  // "clear" away; this is what the room is built from instead.
+  std::map<std::string, std::vector<double>> moved_points;
+  // A sketch edited in Geomagic Design X and brought back: its points, its
+  // lines and its floor ring, as one record. Importing again replaces this
+  // outright rather than layering a second copy of the drawing on the first.
+  std::optional<Json> imported_sketch;
   // Walls the operator says are not really there, keyed by their corners
   // ("wall:P_003|P_004"). A corner name outlives a rebuild; an edge index does
   // not.

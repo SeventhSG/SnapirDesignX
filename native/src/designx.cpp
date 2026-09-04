@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <IGESControl_Controller.hxx>
@@ -35,12 +36,84 @@ const std::map<std::string, std::string>& suffixes() {
 
 using Ring = std::vector<std::array<double, 3>>;
 
+// Half-arm of the cross drawn through a single shot, centimetres.
+constexpr double kMark = 5.0;
+
+// Points that have to survive the handover on their own.
+//
+// The depth shots above all: they are single points, so no polyline carries
+// them, and a room exported without them arrives in Design X with every
+// rectangle looking flat against the wall. The instrument's own stations go
+// too - they are where the panoramas were taken from.
+std::vector<std::array<double, 3>> vertices_of(const Room& room) {
+  std::vector<std::array<double, 3>> out;
+  for (const auto& p : room.points)
+    if (p.role == Role::Depth || p.role == Role::Socket || p.role == Role::Plumbing)
+      out.push_back({p.x, p.y, p.z});
+  for (const auto& p : room.stations) out.push_back({p.x, p.y, p.z});
+  return out;
+}
+
+// The wireframe of what a measured rectangle actually becomes.
+//
+// A shot in the middle of a rectangle says how far the thing standing on the
+// wall reaches, and that is the one number the drawing cannot show on its own:
+// the rectangle looks identical whether the boiler is 8 cm deep or 40. So the
+// far face is drawn where the shot put it, joined back to the rectangle corner
+// by corner - a box, in the round, at the measured depth.
+void depth_box(const Opening& op, const std::vector<Pt>& ring,
+               std::vector<Ring>& out) {
+  if (!op.measured() || ring.size() < 3) return;
+  const double cx = (op.left.x + op.right.x) / 2;
+  const double cy = (op.left.y + op.right.y) / 2;
+
+  // The inward normal of the wall this rectangle sits on. Same derivation the
+  // builder uses to stand the fitting up, so the wireframe lands on the body.
+  const Projection pr = project_onto_edges({cx, cy}, ring);
+  const Pt& a = ring[pr.edge];
+  const Pt& b = ring[(pr.edge + 1) % ring.size()];
+  double ex = b.x - a.x, ey = b.y - a.y;
+  double len = std::sqrt(ex * ex + ey * ey);
+  if (len == 0.0) len = 1.0;
+  double nx = -ey / len, ny = ex / len;
+  if (!point_in_polygon({pr.point.x + nx * 0.5, pr.point.y + ny * 0.5}, ring)) {
+    nx = -nx;
+    ny = -ny;
+  }
+
+  const double sides[2] = {op.out_depth ? *op.out_depth : 0.0,
+                           op.in_depth ? -*op.in_depth : 0.0};
+  for (double depth : sides) {
+    if (depth == 0.0) continue;
+    const double dx = nx * depth, dy = ny * depth;
+    const std::array<std::array<double, 3>, 4> face = {{
+        {op.left.x + dx, op.left.y + dy, op.sill()},
+        {op.right.x + dx, op.right.y + dy, op.sill()},
+        {op.right.x + dx, op.right.y + dy, op.head()},
+        {op.left.x + dx, op.left.y + dy, op.head()},
+    }};
+    Ring loop(face.begin(), face.end());
+    loop.push_back(face[0]);
+    out.push_back(loop);
+    const std::array<std::array<double, 2>, 4> back = {{
+        {op.left.x, op.left.y}, {op.right.x, op.right.y},
+        {op.right.x, op.right.y}, {op.left.x, op.left.y},
+    }};
+    for (size_t i = 0; i < 4; ++i)
+      out.push_back({{back[i][0], back[i][1], face[i][2]}, face[i]});
+  }
+}
+
 // Every closed or open polyline worth handing over.
 std::vector<Ring> rings_of(const Room& room) {
   std::vector<Ring> rings;
 
   Ring ring;
-  for (const auto& p : room.outline) ring.push_back({p.x, p.y, p.z});
+  std::vector<Pt> plan;
+  for (const auto& p : room.outline) {
+    ring.push_back({p.x, p.y, p.z});
+    plan.push_back({p.x, p.y});
+  }
   rings.push_back(ring);
 
   std::vector<Pt3> ceil_pts;
@@ -71,6 +144,32 @@ std::vector<Ring> rings_of(const Room& room) {
                      {bx, by, head},
                      {ax, ay, head},
                      {ax, ay, sill}});
+    depth_box(op, plan, rings);
+  }
+
+  // A flight is the line the surveyor walked up, nosing by nosing. Handing
+  // over the room without it leaves the stairs to be drawn again from the
+  // loose points, which is the work the survey already did.
+  for (const auto& flight : room.stairs) {
+    if (flight.points.size() < 2) continue;
+    Ring run;
+    for (const auto& p : flight.points) run.push_back({p.x, p.y, p.z});
+    rings.push_back(run);
+  }
+
+  // Skirting: the pair that measured one board, as the diagonal it was shot
+  // as. Two points, so it reads as the depth and height it is.
+  for (const auto& v : room.pervaz)
+    rings.push_back({{v.corner.x, v.corner.y, v.corner.z},
+                     {v.wall.x, v.wall.y, v.wall.z}});
+
+  // A single shot is written as an IGES point as well, which is the exact
+  // thing. The cross is for STEP, whose writer drops a loose vertex on the
+  // floor: three short lines through the shot, so it arrives either way.
+  for (const auto& v : vertices_of(room)) {
+    rings.push_back({{v[0] - kMark, v[1], v[2]}, {v[0] + kMark, v[1], v[2]}});
+    rings.push_back({{v[0], v[1] - kMark, v[2]}, {v[0], v[1] + kMark, v[2]}});
+    rings.push_back({{v[0], v[1], v[2] - kMark}, {v[0], v[1], v[2] + kMark}});
   }
   return rings;
 }
@@ -82,12 +181,22 @@ std::string write_curves(const Room& room, const fs::path& path,
   builder.MakeCompound(compound);
 
   for (const auto& ring : rings_of(room)) {
+    if (ring.size() < 2) continue;
     BRepBuilderAPI_MakePolygon poly;
     for (const auto& p : ring)
       poly.Add(gp_Pnt(p[0] * kCmToMm, p[1] * kCmToMm, p[2] * kCmToMm));
-    if (!(ring.front() == ring.back())) poly.Close();
+    // An open run - a flight of stairs, a skirting pair - is a line, not a
+    // loop. Closing it would draw a wall that was never measured.
+    if (ring.size() > 2 && !(ring.front() == ring.back())) poly.Close();
     builder.Add(compound, poly.Wire());
   }
+
+  // Single shots, as points. Design X shows a vertex where the instrument
+  // stood; a wire cannot carry one.
+  for (const auto& v : vertices_of(room))
+    builder.Add(compound, BRepBuilderAPI_MakeVertex(
+                              gp_Pnt(v[0] * kCmToMm, v[1] * kCmToMm, v[2] * kCmToMm))
+                              .Vertex());
 
   const std::string out = path.u8string();
   if (fmt == "iges") {

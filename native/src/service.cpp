@@ -38,6 +38,7 @@
 #include "snapir/elements.hpp"
 #include "snapir/service.hpp"
 #include "snapir/geometry.hpp"
+#include "snapir/importx.hpp"
 #include "snapir/parser.hpp"
 #include "snapir/settings.hpp"
 #include "snapir/solid.hpp"
@@ -49,7 +50,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.12";
+constexpr const char* kVersion = "1.3.13";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -304,6 +305,64 @@ Room apply_overrides(const std::string& pid, const Room& parsed) {
   const RoomOverride* ov = g_store->override_if_any(pid, room.name);
   if (!ov) return room;
 
+  if (ov->imported_sketch && ov->imported_sketch->is_object()) {
+    // The drawing that came back from Design X, before anything else: its
+    // points have to be in the room for a ring, a line or a role override to be
+    // able to name one. Points that matched a shot on the way out kept that
+    // shot's name, so most of this record is lines.
+    const Json& sk = *ov->imported_sketch;
+    std::set<std::string> have;
+    for (const auto& p : room.points) have.insert(p.name);
+    const Json pts = sk.value("points", Json::array());
+    for (size_t i = 0; i < pts.size(); ++i) {
+      const Json& d = pts[i];
+      if (!d.is_object()) continue;
+      const std::string name = d.value("name", std::string());
+      if (name.empty() || have.count(name)) continue;
+      Point p;
+      p.name = name;
+      p.x = d.value("x", 0.0);
+      p.y = d.value("y", 0.0);
+      p.z = d.value("z", room.floor_z ? *room.floor_z : 0.0);
+      const std::string role = d.value("role", std::string());
+      p.role = role.empty() ? Role::Unknown : role_from_string(role);
+      p.index = 20000 + static_cast<int>(i);
+      p.derived = true;
+      p.source = d.value("from", std::string("Design X"));
+      room.points.push_back(p);
+      have.insert(name);
+    }
+    std::set<std::pair<std::string, std::string>> segs;
+    for (const auto& s : room.segments) segs.insert(std::minmax(s.first, s.second));
+    for (const auto& s : sk.value("segments", Json::array())) {
+      if (!s.is_array() || s.size() < 2) continue;
+      const std::string a = s[0].get<std::string>(), b = s[1].get<std::string>();
+      if (segs.insert(std::minmax(a, b)).second) room.segments.emplace_back(a, b);
+    }
+  }
+
+  if (!ov->moved_points.empty()) {
+    // A point picked up and put somewhere else. Everything the room is worked
+    // out from - the ring, the openings, the lines - reads the moved position,
+    // so this has to land before any of that is derived.
+    for (auto& p : room.points) {
+      const auto it = ov->moved_points.find(p.name);
+      if (it == ov->moved_points.end() || it->second.size() != 3) continue;
+      p.x = it->second[0];
+      p.y = it->second[1];
+      p.z = it->second[2];
+      p.moved = true;
+    }
+  }
+
+  if ((ov->imported_sketch && ov->imported_sketch->is_object()) ||
+      !ov->moved_points.empty()) {
+    // Lines came in, or a corner is somewhere else than it was shot. Either way
+    // the room no longer follows from what the classifier decided on the first
+    // pass, so it is worked out again from where things now are.
+    reread_topology(room);
+  }
+
   if (!ov->derived_points.empty()) {
     // Constructed points join the room before anything else is layered on, so a
     // ring, a line or an opening can be built through them. They are flagged,
@@ -369,6 +428,27 @@ Room apply_overrides(const std::string& pid, const Room& parsed) {
     // A relabelled point changes what the room is, so everything derived from
     // the old reading is worked out again.
     apply_roles(room, ov->role_overrides);
+  }
+
+  if (ov->imported_sketch && ov->imported_sketch->is_object() && !ov->outline_order) {
+    // The floor loop as it came back from Design X. It only wins where the
+    // operator has not drawn a ring of their own in the app - that is a later
+    // decision than the file, and the later one stands.
+    const Json ring_names = ov->imported_sketch->value("outline", Json::array());
+    if (ring_names.size() >= 3) {
+      std::map<std::string, const Point*> by_name;
+      for (const auto& p : room.points) by_name[p.name] = &p;
+      room.outline.clear();
+      for (const auto& n : ring_names) {
+        const auto it = by_name.find(n.get<std::string>());
+        if (it != by_name.end()) room.outline.push_back(*it->second);
+      }
+      room.outline_source = "Design X";
+      std::vector<Issue> keep;
+      for (const auto& i : room.issues)
+        if (i.code != "no-outline") keep.push_back(i);
+      room.issues = std::move(keep);
+    }
   }
 
   if (ov->outline_order) {
@@ -496,7 +576,8 @@ Json room_json(const Room& room, const RoomOverride* ov,
                           {"role", to_string(p.role)},
                           {"layer", p.layer},
                           {"derived", p.derived},
-                          {"source", p.source}});
+                          {"source", p.source},
+                          {"moved", p.moved}});
   j["points"] = points;
 
   // Where the instrument stood. One setup per panorama, so this is also where
@@ -952,6 +1033,17 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                   ov.removed_walls = b["removedWalls"].get<std::vector<std::string>>();
                 if (b.contains("derivedPoints") && !b["derivedPoints"].is_null())
                   ov.derived_points = b["derivedPoints"].get<std::vector<Json>>();
+                // A point put back where it was shot is not "moved to its
+                // original place", it is not moved. Dropping the entry rather
+                // than storing the shot's own coordinates keeps the provenance
+                // list honest.
+                if (b.contains("movedPoints") && !b["movedPoints"].is_null()) {
+                  ov.moved_points.clear();
+                  for (const auto& kv : b["movedPoints"].items()) {
+                    const auto xyz = kv.value().get<std::vector<double>>();
+                    if (xyz.size() == 3) ov.moved_points[kv.key()] = xyz;
+                  }
+                }
 
                 store.save();
                 g_rooms.erase(pid);  // force a clean re-parse
@@ -1223,6 +1315,78 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                fail(res, 422, e.what());
              }
            });
+
+  // Take the sketch back from Design X, over the top of the old one.
+  //
+  // The file replaces whatever the last import brought in rather than adding to
+  // it, so importing the same drawing twice leaves the room where importing it
+  // once did, and re-importing after another edit does not accumulate the
+  // corners that were deleted in between.
+  svr.Post(R"(/projects/([^/]+)/rooms/([^/]+)/import-designx)",
+           [&](const httplib::Request& req, httplib::Response& res) {
+             std::lock_guard<std::mutex> guard(g_lock);
+             const std::string pid = req.matches[1], name = req.matches[2];
+             try {
+               const Json b = Json::parse(req.body.empty() ? "{}" : req.body);
+               const Room room = room_or_throw(pid, name);
+               const ImportedSketch sk =
+                   sketch_for(room, b.value("path", std::string()));
+
+               Json pts = Json::array();
+               for (const auto& d : sk.points)
+                 pts.push_back(Json{{"name", d.name}, {"x", d.x}, {"y", d.y},
+                                    {"z", d.z}, {"role", d.role}, {"from", d.from}});
+               Json segs = Json::array();
+               for (const auto& s : sk.segments)
+                 segs.push_back(Json::array({s.first, s.second}));
+
+               RoomOverride& ov = store.override_for(pid, name);
+               ov.imported_sketch = Json{{"points", pts},
+                                         {"segments", segs},
+                                         {"outline", sk.outline},
+                                         {"file", sk.file},
+                                         {"matched", sk.matched}};
+               // The ring that came in is the ring. A ring the operator drew
+               // before the trip to Design X described the old shape and would
+               // fight this one.
+               ov.outline_order.reset();
+               store.save();
+               g_rooms.erase(pid);
+
+               Json out = room_json(room_or_throw(pid, name),
+                                    store.override_if_any(pid, name),
+                                    store.get(pid).folder);
+               out["imported"] = Json{{"points", sk.points.size()},
+                                      {"matched", sk.matched},
+                                      {"segments", sk.segments.size()},
+                                      {"outline", sk.outline.size()},
+                                      {"file", sk.file}};
+               ok_json(res, out);
+             } catch (const std::out_of_range& e) {
+               fail(res, 404, e.what());
+             } catch (const std::exception& e) {
+               fail(res, 422, e.what());
+             }
+           });
+
+  // Forget the imported sketch and go back to the survey as shot.
+  svr.Delete(R"(/projects/([^/]+)/rooms/([^/]+)/import-designx)",
+             [&](const httplib::Request& req, httplib::Response& res) {
+               std::lock_guard<std::mutex> guard(g_lock);
+               const std::string pid = req.matches[1], name = req.matches[2];
+               try {
+                 store.override_for(pid, name).imported_sketch.reset();
+                 store.save();
+                 g_rooms.erase(pid);
+                 ok_json(res, room_json(room_or_throw(pid, name),
+                                        store.override_if_any(pid, name),
+                                        store.get(pid).folder));
+               } catch (const std::out_of_range& e) {
+                 fail(res, 404, e.what());
+               } catch (const std::exception& e) {
+                 fail(res, 422, e.what());
+               }
+             });
 
   // On Android the same service also serves the interface, so the page and the
   // API share an origin and there is no file:// or mixed-content problem to

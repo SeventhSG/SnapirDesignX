@@ -213,6 +213,17 @@ ipcMain.handle("pick-sdxp", async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 
+// A sketch coming back from Geomagic Design X. Same shape as the .sdxp
+// picker: one file, wherever the operator keeps their CAD work.
+ipcMain.handle("pick-sketch", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: "Import a sketch from Design X",
+    filters: [{ name: "Exact curves", extensions: ["igs", "iges", "stp", "step"] }],
+    properties: ["openFile"],
+  });
+  return r.canceled ? null : r.filePaths[0];
+});
+
 // The Windows caption buttons live outside the page, so the theme has to be
 // pushed to them separately or they stay light on a dark window.
 ipcMain.handle("set-theme", async (_e, dark) => {

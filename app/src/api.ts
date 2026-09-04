@@ -16,6 +16,8 @@ export interface Point {
   /** Constructed by the operator, not measured by the instrument. */
   derived?: boolean;
   source?: string;
+  /** Picked up and put somewhere else by hand. The CSV still has the shot. */
+  moved?: boolean;
 }
 
 /** Where two drawn lines cross: a corner the operator can adopt. */
@@ -65,6 +67,12 @@ export interface Room {
   /** Set when this room overrides the job's wall thickness. */
   wallThickness: number | null;
   status: Status; builtAt: string | null; stepPath: string | null;
+}
+
+/** What one trip back from Design X actually brought in. */
+export interface ImportReport {
+  file: string; points: number; matched: number;
+  segments: number; outline: number;
 }
 
 export interface Project {
@@ -188,6 +196,17 @@ export const api = {
     call<{ path: string; bytes: number; format: string }>(
       `/projects/${id}/rooms/${encodeURIComponent(name)}/export-designx?fmt=${fmt}`,
       { method: "POST" }),
+  /** Take the room back from Design X, over the top of the last import. */
+  importDesignX: async (id: string, name: string, path: string) =>
+    fill(await call<Room & { imported: ImportReport }>(
+      `/projects/${id}/rooms/${encodeURIComponent(name)}/import-designx`,
+      { method: "POST", body: JSON.stringify({ path }) })) as
+      Room & { imported: ImportReport },
+  /** Forget the imported sketch and go back to the survey as shot. */
+  clearDesignX: async (id: string, name: string) =>
+    fill(await call<Room>(
+      `/projects/${id}/rooms/${encodeURIComponent(name)}/import-designx`,
+      { method: "DELETE" })),
   connections: (id: string) =>
     call<{ connections: Connection[] }>(`/projects/${id}/connections`),
   createConnection: (id: string, body: {

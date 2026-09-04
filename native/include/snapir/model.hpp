@@ -36,6 +36,10 @@ struct Point {
   // written back to the survey, and never silently mistaken for a shot.
   bool derived = false;
   std::string source;  // how it was constructed, for the provenance list
+  // Picked up and put somewhere else by hand. The shot as the instrument took
+  // it is still in the CSV; this says the room is not being built from it,
+  // which is the sort of thing that has to be visible.
+  bool moved = false;
   // The operator said what this point is. Inference must leave it alone -
   // otherwise the next rebuild quietly re-derives the very thing they just
   // corrected, and their decision looks like it never took.

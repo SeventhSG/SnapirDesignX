@@ -33,6 +33,16 @@ const en = {
   tFace: "Face", tSketch: "Sketch", tOpening: "Opening", tFixture: "Fixture",
   buildRoom: "Build", exportStep: "Export STEP", exportRoom: "Export",
   forDesignX: "For Design X",
+  fromDesignX: "From Design X",
+  fromDesignXHelp: "Bring the sketch back after editing it in Design X. "
+    + "A corner that landed on a surveyed shot keeps that shot's name, so "
+    + "everything you have already decided about this room still applies.",
+  importedSketch: "Sketch imported",
+  clearSketch: "Drop the sketch",
+  clearedSketch: "Back to the survey as shot",
+  matchedShots: "matched",
+  newPoints: "new",
+  ringCorners: "corners in the ring",
   formatHelp: "STEP is the exact body to work from. STL is triangles, for viewing only. DXF is a plan, one layer per element, for AutoCAD. GLB is separate solid bodies, for SketchUp.",
   schemaHelp: "STEP schema. AP242 is the current one and what SolidWorks and Design X prefer.",
 
@@ -78,6 +88,13 @@ const en = {
   editRing: "Outline", editLayer: "Layer", editLine: "Line",
   ringHelp: "Click floor corners in order. Click one on the outline to drop it.",
   layerHelp: "Click a point, then set what it is.",
+  movePoint: "Move",
+  moveHelp: "Drag an arrow to move the point along that axis. "
+    + "The shot stays in the survey file either way.",
+  pointMoved: "Moved to",
+  pointIsMoved: "Not where the instrument put it.",
+  putItBack: "Put it back",
+  pointRestored: "Back where it was shot",
   lineHelp: "Click two points to connect them. Click the same pair again to unlink.",
   linkTitle: "Connections",
   linesDrawn: "lines in this room", linkCount: "floor to ceiling",
@@ -171,6 +188,16 @@ const tr: Record<keyof typeof en, string> = {
   tFace: "Yüzey", tSketch: "Çizim", tOpening: "Boşluk", tFixture: "Tesisat",
   buildRoom: "Oluştur", exportStep: "STEP aktar", exportRoom: "Dışa aktar",
   forDesignX: "Design X için",
+  fromDesignX: "Design X'ten al",
+  fromDesignXHelp: "Design X'te düzenledikten sonra çizimi geri getirir. "
+    + "Ölçülen bir noktaya denk gelen köşe o noktanın adını korur, "
+    + "yani bu oda için verdiğin kararlar aynen geçerli kalır.",
+  importedSketch: "Çizim alındı",
+  clearSketch: "Çizimi bırak",
+  clearedSketch: "Ölçüldüğü haline dönüldü",
+  matchedShots: "eşleşti",
+  newPoints: "yeni",
+  ringCorners: "köşe halkada",
   formatHelp: "STEP üzerinde çalışılacak tam gövdedir. STL üçgenlerdir, yalnızca görüntülemek içindir. DXF, her öğenin kendi katmanında olduğu, AutoCAD için bir plandır. GLB, SketchUp için ayrı katı gövdelerdir.",
   schemaHelp: "STEP şeması. AP242 güncel olanıdır; SolidWorks ve Design X bunu tercih eder.",
 
@@ -216,6 +243,13 @@ const tr: Record<keyof typeof en, string> = {
   editRing: "Oda hattı", editLayer: "Katman", editLine: "Çizgi",
   ringHelp: "Zemin köşelerine sırayla tıkla. Hatta olan bir köşeye tıklarsan çıkar.",
   layerHelp: "Bir noktaya tıkla, sonra ne olduğunu seç.",
+  movePoint: "Taşı",
+  moveHelp: "Bir oku sürükleyerek noktayı o eksende taşı. "
+    + "Ölçüm dosyasındaki nokta her hâlükârda yerinde kalır.",
+  pointMoved: "Taşındı:",
+  pointIsMoved: "Aletin koyduğu yerde değil.",
+  putItBack: "Yerine koy",
+  pointRestored: "Ölçüldüğü yere döndü",
   lineHelp: "Bağlamak için iki noktaya tıkla. Aynı ikiliye tekrar tıklarsan bağlantı kalkar.",
   linkTitle: "Bağlantılar",
   linesDrawn: "çizgi bu odada", linkCount: "zemin-tavan",

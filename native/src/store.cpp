@@ -103,6 +103,9 @@ Json to_json(const RoomOverride& ov) {
   j["removed_segments"] = ov.removed_segments;
   j["added_openings"] = ov.added_openings;
   j["derived_points"] = ov.derived_points;
+  j["moved_points"] = ov.moved_points;
+  if (ov.imported_sketch) j["imported_sketch"] = *ov.imported_sketch;
+  else j["imported_sketch"] = nullptr;
   j["removed_walls"] = ov.removed_walls;
   put_opt(j, "built_at", ov.built_at);
   put_opt(j, "step_path", ov.step_path);
@@ -129,6 +132,9 @@ RoomOverride override_from_json(const Json& j) {
       get_or(j, "removed_segments", std::vector<std::vector<std::string>>{});
   ov.added_openings = get_or(j, "added_openings", std::vector<Json>{});
   ov.derived_points = get_or(j, "derived_points", std::vector<Json>{});
+  ov.moved_points =
+      get_or(j, "moved_points", std::map<std::string, std::vector<double>>{});
+  ov.imported_sketch = get_opt<Json>(j, "imported_sketch");
   ov.removed_walls = get_or(j, "removed_walls", std::vector<std::string>{});
   ov.built_at = get_opt<std::string>(j, "built_at");
   ov.step_path = get_opt<std::string>(j, "step_path");

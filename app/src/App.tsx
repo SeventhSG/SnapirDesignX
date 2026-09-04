@@ -221,6 +221,10 @@ export default function App() {
   const [tool, setTool] = useState<"face" | "sketch">("face");
   const [view, setView] = useState<"2d" | "3d">("3d");
   const [edit, setEdit] = useState<EditMode>("outline");
+  /* Move mode: the axis handles on the selected point. Off by default, and
+     only reachable from Layer mode - a shot is where the instrument said it
+     is, so putting it somewhere else has to be a decision, not a slip. */
+  const [axisMove, setAxisMove] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [lineSel, setLineSel] = useState<[string, string] | null>(null);
   const [ring, setRing] = useState<string[]>([]);
@@ -713,6 +717,36 @@ export default function App() {
     } catch (e) { say((e as Error).message, true); }
   };
 
+  /* The trip back. A sketch tidied up in Design X replaces the last one this
+     room was given, rather than being layered on top of it - so importing
+     twice leaves the room exactly where importing once did. */
+  const doImportDesignX = async () => {
+    if (!project || !room) return;
+    const picked = await bridge?.pickSketch();
+    if (!picked) return;
+    setBusy(true);
+    try {
+      const r = await api.importDesignX(project.id, room.name, picked);
+      setRoom(r);
+      setRing([]);
+      setResult(null);
+      const n = r.imported;
+      say(`${T("importedSketch")} · ${n.matched} ${T("matchedShots")} · ` +
+          `${n.points} ${T("newPoints")} · ${n.outline} ${T("ringCorners")}`);
+    } catch (e) { say((e as Error).message, true); }
+    finally { setBusy(false); }
+  };
+
+  const doClearDesignX = async () => {
+    if (!project || !room) return;
+    try {
+      setRoom(await api.clearDesignX(project.id, room.name));
+      setRing([]);
+      setResult(null);
+      say(T("clearedSketch"));
+    } catch (e) { say((e as Error).message, true); }
+  };
+
   const openProjectSettings = () => {
     if (!project) return;
     setDraftName(project.name);
@@ -922,6 +956,45 @@ export default function App() {
     say(T("cornerMade"));
   };
 
+  /**
+   * Put a point somewhere else. The CSV is never touched: the shot as the
+   * instrument took it is still in the file, and clearing the move brings it
+   * straight back. Everything the room is worked out from reads the new place.
+   */
+  const movePoint = async (name: string, to: [number, number, number]) => {
+    if (!room) return;
+    const shot = room.points.find((p) => p.name === name);
+    if (!shot) return;
+    // A constructed point is edited where it lives, so it keeps its provenance
+    // instead of gaining a second record saying it was moved from itself.
+    if (shot.derived) {
+      const derived = room.points.filter((p) => p.derived).map((p) =>
+        p.name === name
+          ? { name: p.name, x: to[0], y: to[1], z: to[2], role: p.role, from: p.source }
+          : { name: p.name, x: p.x, y: p.y, z: p.z, role: p.role, from: p.source });
+      await patch({ derivedPoints: derived }, true);
+    } else {
+      await patch({ movedPoints: { ...moves(), [name]: to } }, true);
+    }
+    say(`${T("pointMoved")} · ${to[0].toFixed(1)}, ${to[1].toFixed(1)}, ${to[2].toFixed(1)}`);
+  };
+
+  /* Every point that is not where it was shot, read back off the room rather
+     than remembered here: the room is what the service actually holds, and a
+     list kept alongside it goes stale the moment anything else edits one. */
+  const moves = (): Record<string, [number, number, number]> =>
+    Object.fromEntries((room?.points ?? []).filter((p) => p.moved)
+      .map((p) => [p.name, [p.x, p.y, p.z] as [number, number, number]]));
+
+  /** Back to where the instrument put it. */
+  const unmovePoint = async (name: string) => {
+    const next = moves();
+    if (!next[name]) return;
+    delete next[name];
+    await patch({ movedPoints: next }, true);
+    say(T("pointRestored"));
+  };
+
   /** Remove the line the operator has selected. */
   const deleteLine = async () => {
     if (!room || !lineSel) return;
@@ -961,10 +1034,12 @@ export default function App() {
       selectedLine: lineSel,
       onPickPoint: pickPoint,
       onPickLine: setLineSel,
+      moveMode: edit === "layer" && axisMove,
+      onMovePoint: movePoint,
     };
     // pickPoint closes over edit/pending, which are both in the list already.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inSketch, room, ring, edit, pointName, pending, lineSel]);
+  }, [inSketch, room, ring, edit, pointName, pending, lineSel, axisMove]);
 
   /* ================================================================== */
   return (
@@ -1225,18 +1300,25 @@ export default function App() {
                 <div className="rail" role="group">
                   {(["outline", "line", "layer"] as EditMode[]).map((m) => (
                     <button key={m} aria-pressed={edit === m}
-                            onClick={() => { setEdit(m); setPending(null); }}>
+                            onClick={() => { setEdit(m); setPending(null);
+                                             if (m !== "layer") setAxisMove(false); }}>
                       {T(m === "outline" ? "editRing"
                         : m === "line" ? "editLine" : "editLayer")}
                     </button>
                   ))}
+                  {edit === "layer" && (
+                    <button aria-pressed={axisMove} title={T("moveHelp")}
+                            onClick={() => setAxisMove(!axisMove)}>
+                      {T("movePoint")}</button>
+                  )}
                 </div>
               )}
               <div className="overlay">
                 <span className="hud">
                   {inSketch
                     ? (edit === "outline" ? T("ringHelp")
-                       : edit === "line" ? T("lineHelp") : T("layerHelp"))
+                       : edit === "line" ? T("lineHelp")
+                       : axisMove ? T("moveHelp") : T("layerHelp"))
                     : look === "inside" && !panoOpen ? T("insideHint")
                     : room.name}
                 </span>
@@ -1330,6 +1412,15 @@ export default function App() {
                 <div className="acts">
                   <button className="btn q sm" onClick={leaveRoom}>{T("back")}</button>
                   <button className="btn q sm" onClick={doDesignX}>{T("forDesignX")}</button>
+                  <button className="btn q sm" onClick={doImportDesignX}
+                          title={T("fromDesignXHelp")}>{T("fromDesignX")}</button>
+                  {/* Only once there is an import to undo. The survey itself is
+                      untouched throughout, so this always has somewhere to go
+                      back to. */}
+                  {room.outlineSource === "Design X" && (
+                    <button className="btn q sm" onClick={doClearDesignX}>
+                      {T("clearSketch")}</button>
+                  )}
                   <select className="fmt" value={fmt} title={T("formatHelp")}
                           onChange={(e) => pickFmt(e.target.value)}>
                     {EXPORT_FORMATS.map((f) => (
@@ -1493,6 +1584,14 @@ export default function App() {
                           </button>
                         ))}
                       </div>
+                      {selectedPoint.moved && (
+                        <p className="quiet moved">{T("pointIsMoved")}</p>
+                      )}
+                      {selectedPoint.moved && (
+                        <button className="btn q sm"
+                                onClick={() => void unmovePoint(selectedPoint.name)}>
+                          {T("putItBack")}</button>
+                      )}
                       <button className="btn q sm delrow" onClick={deletePoint}>
                         {T("deletePoint")}</button>
                     </>

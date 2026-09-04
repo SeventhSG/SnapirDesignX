@@ -175,6 +175,65 @@ WallFrame wall_frame(double x, double y, const std::vector<Pt>& ring) {
   return {pr.point, {nx, ny}, {dx / len, dy / len}, pr.distance};
 }
 
+// The ring corners lying between two edges, the short way round.
+//
+// A window in the corner of a room has one jamb on each of two walls, and
+// everything between them - including the pier where the walls meet - is glass.
+// Which corners those are depends on which way round the ring you walk, and
+// only one of the two answers is the window. Empty means there is no sensible
+// walk: more than two corners apart, the pair is the classifier having matched
+// two jambs that belong to different holes.
+bool corner_walk(const std::vector<Pt>& ring, int ea, int eb,
+                 std::vector<int>& out) {
+  const int n = static_cast<int>(ring.size());
+  std::vector<int> fwd, back;
+  for (int k = 0; k < ((eb - ea) % n + n) % n; ++k) fwd.push_back((ea + 1 + k) % n);
+  for (int k = 0; k < ((ea - eb) % n + n) % n; ++k) back.push_back(((ea - k) % n + n) % n);
+  out = fwd.size() <= back.size() ? fwd : back;
+  return !out.empty() && out.size() <= 2;
+}
+
+// The cutter for an opening that turns a corner.
+//
+// A single box between the two jambs would slice the corner off on the diagonal
+// and leave the pier standing on one side of it. Instead the cut follows the
+// wall: the band runs along the inner face from jamb to jamb, around every
+// corner in between, and is pushed through the wall on the mitre, so the corner
+// empties along with the two returns.
+bool wrapped_cutter(const Opening& op, const std::vector<Pt>& ring,
+                    const Pt seats[2], const int edges[2],
+                    const BuildSettings& cfg, TopoDS_Shape& out) {
+  std::vector<int> corners;
+  if (!corner_walk(ring, edges[0], edges[1], corners)) return false;
+  const double reach = cm(cfg.wall_thickness) * 3.0;
+  const size_t n = ring.size();
+
+  auto end = [&](const Pt& seat, int edge, Pt& in, Pt& outer) {
+    const Frame f = outward(ring, ring[edge], ring[(edge + 1) % n]);
+    in = {seat.x - f.normal.x * reach, seat.y - f.normal.y * reach};
+    outer = {seat.x + f.normal.x * reach, seat.y + f.normal.y * reach};
+  };
+
+  std::vector<Pt> inner, outer;
+  Pt i0, o0, i1, o1;
+  end(seats[0], edges[0], i0, o0);
+  inner.push_back(i0);
+  outer.push_back(o0);
+  for (int k : corners) {
+    inner.push_back(mitre_vertex(ring, static_cast<size_t>(k), -reach));
+    outer.push_back(mitre_vertex(ring, static_cast<size_t>(k), reach));
+  }
+  end(seats[1], edges[1], i1, o1);
+  inner.push_back(i1);
+  outer.push_back(o1);
+
+  std::vector<Pt> footprint = inner;
+  footprint.insert(footprint.end(), outer.rbegin(), outer.rend());
+  if (!self_intersections(footprint).empty()) return false;
+  out = prism(footprint, level_plane(op.sill()), level_plane(op.head()));
+  return true;
+}
+
 // A box spanning the wall at an opening, overshooting both faces.
 TopoDS_Shape opening_cutter(const Opening& op, const std::vector<Pt>& ring,
                             const BuildSettings& cfg) {
@@ -184,6 +243,21 @@ TopoDS_Shape opening_cutter(const Opening& op, const std::vector<Pt>& ring,
   const double dx = bx - ax, dy = by - ay;
   const double length = std::sqrt(dx * dx + dy * dy);
   if (length < 1.0) throw BuildError("opening jambs coincide");
+
+  const Projection pa = project_onto_edges({ax, ay}, ring);
+  const Projection pb = project_onto_edges({bx, by}, ring);
+  // Only where both jambs actually sit on the walls they were matched to. A
+  // jamb further off than the wall is thick is not a corner window; it is a
+  // shot the ring never reached, and following the wall from a seat half a
+  // metre away from it would cut a hole nobody measured.
+  const bool seated =
+      std::max(pa.distance, pb.distance) <= cm(cfg.wall_thickness) * 2.0;
+  if (pa.edge != pb.edge && seated) {
+    const Pt seats[2] = {pa.point, pb.point};
+    const int edges[2] = {pa.edge, pb.edge};
+    TopoDS_Shape wrapped;
+    if (wrapped_cutter(op, ring, seats, edges, cfg, wrapped)) return wrapped;
+  }
 
   double nx = -dy / length, ny = dx / length;  // wall normal, direction TBD
   const double cx = (ax + bx) / 2, cy = (ay + by) / 2;

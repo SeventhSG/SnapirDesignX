@@ -45,6 +45,14 @@ class RoomOverride:
     # the corner it stops short of, or where two runs cross. Each carries
     # name, x, y, z, an optional role, and how it was made.
     derived_points: list[dict] = field(default_factory=list)
+    # Points the operator moved by hand, name -> [x, y, z] in survey
+    # centimetres. The CSV is never touched, so the shot as taken is always
+    # one "clear" away; this is what the room is built from instead.
+    moved_points: dict[str, list[float]] = field(default_factory=dict)
+    # A sketch edited in Geomagic Design X and brought back: its points, its
+    # lines and its floor ring, as one record. Importing again replaces this
+    # outright rather than layering a second copy of the drawing on the first.
+    imported_sketch: dict | None = None
     # Walls the operator says are not really there, keyed by their corners
     # ("wall:P_003|P_004"). A corner name outlives a rebuild; an edge index
     # does not.

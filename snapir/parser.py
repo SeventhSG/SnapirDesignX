@@ -361,7 +361,15 @@ def _attach_depth_points(room: Room) -> None:
 
     Without a middle shot the fitting still builds, on the depth in settings.
     """
-    ring = [p.xy for p in room.outline]
+    # On the inferred path the ring has not been assembled yet, and without one
+    # there is no telling which side of a wall is the room. The sign of the
+    # depth then fell out of how the outline happened to be wound and which
+    # jamb came first, so a boiler standing in the room could just as well be
+    # read as a recess cut into the wall behind it. The floor shots in survey
+    # order are the ring, in every practical sense, and are enough to decide.
+    ring = [p.xy for p in room.outline] or [
+        p.xy for p in sorted((q for q in room.points if q.role is Role.FLOOR),
+                             key=lambda q: q.index)]
     for op in room.openings:
         ax, ay = op.left.x, op.left.y
         bx, by = op.right.x, op.right.y
@@ -675,12 +683,19 @@ def _pair_jambs(jambs: list[Jamb], ring) -> list[tuple[Jamb, Jamb]]:
     of a door, wander to a window on another wall, then come back. Two jambs
     only form an opening when they sit on the same wall run, at a believable
     width, and span a similar height.
+
+    A window in the corner of a room is the one exception: its jambs are on
+    two different walls by construction, and the pier between them is glass
+    too. Those pair only across a shared corner, and only when no jamb on the
+    same wall would do - otherwise every door on a short wall would reach
+    around the corner for a partner.
     """
     from .geometry import project_onto_edges
 
     if len(jambs) < 2 or len(ring) < 3:
         return []
 
+    n = len(ring)
     edge_of = {}
     for j in jambs:
         idx, _seat, _d = project_onto_edges((j.x, j.y), list(ring))
@@ -691,20 +706,25 @@ def _pair_jambs(jambs: list[Jamb], ring) -> list[tuple[Jamb, Jamb]]:
     for i, a in enumerate(jambs):
         if i in used:
             continue
-        best, best_d = None, None
+        best, best_rank = None, None
         for k in range(i + 1, len(jambs)):
             if k in used:
                 continue
             b = jambs[k]
-            if edge_of[id(a)] != edge_of[id(b)]:
+            ea, eb = edge_of[id(a)], edge_of[id(b)]
+            if ea == eb:
+                rank = 0
+            elif (ea + 1) % n == eb or (eb + 1) % n == ea:
+                rank = 1                      # round one corner: a bay window
+            else:
                 continue
             width = ((a.x - b.x) ** 2 + (a.y - b.y) ** 2) ** 0.5
             if not 25.0 <= width <= MAX_OPENING_WIDTH:
                 continue
             if abs(a.z_top - b.z_top) > 25.0 or abs(a.z_bottom - b.z_bottom) > 40.0:
                 continue
-            if best_d is None or width < best_d:
-                best, best_d = k, width
+            if best_rank is None or (rank, width) < best_rank:
+                best, best_rank = k, (rank, width)
         if best is not None:
             used.add(i)
             used.add(best)

@@ -46,6 +46,10 @@ export interface SketchProps {
   selectedLine: [string, string] | null;
   onPickPoint: (name: string) => void;
   onPickLine: (seg: [string, string] | null) => void;
+  /** Show the axis handles on the selected point and let it be dragged. */
+  moveMode?: boolean;
+  /** Dropped at the end of a drag, in the survey's own centimetres. */
+  onMovePoint?: (name: string, to: [number, number, number]) => void;
 }
 
 /** What a line is, judged only by what it joins. */
@@ -131,6 +135,8 @@ export interface GhostRoom {
 interface Scene {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
+  /** Survey space: Z-up, rotated into three.js's Y-up world. */
+  pivot: THREE.Group;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   solid: THREE.Group;
@@ -141,6 +147,10 @@ interface Scene {
   faceIds: number[];
   dots: THREE.Mesh[];
   lines: THREE.Object3D[];
+  /** The three axis handles on the point being moved, if any. */
+  arrows: THREE.Object3D[];
+  /** Metres, what the sketch was shifted by to sit on the origin. */
+  sketchMid: THREE.Vector3;
   hovered: number | null;
   selected: number | null;
   sketching: boolean;
@@ -241,8 +251,9 @@ export default function Viewport({
     scene.add(ghostGroup);
 
     const state: Scene = {
-      renderer, scene, camera, controls, solid, sketch: sk, lineMats: [],
-      faceIds: [], dots: [], lines: [], hovered: null, selected: null,
+      renderer, scene, camera, controls, pivot, solid, sketch: sk, lineMats: [],
+      faceIds: [], dots: [], lines: [], arrows: [],
+      sketchMid: new THREE.Vector3(), hovered: null, selected: null,
       sketching: false,
       inside: false, eye: new THREE.Vector3(), yaw: 0, pitch: 0, dark,
       centre: new THREE.Vector3(), floorY: 0, fence: [], posts: [],
@@ -386,6 +397,7 @@ export default function Viewport({
     clear(s.sketch, s);
     s.dots = [];
     s.lines = [];
+    s.arrows = [];
     const wasSketching = s.sketching;
     s.sketching = !!sketch;
 
@@ -483,6 +495,43 @@ export default function Viewport({
       dot.renderOrder = 2;
       s.sketch.add(dot);
       s.dots.push(dot);
+    }
+
+    s.sketchMid.copy(mid);
+
+    /* The three handles, on the point being moved and nowhere else.
+       A shot is where the instrument said it is, so this is deliberately not
+       something you fall into: it appears only in Layer mode with Move on, and
+       only on the one point that is selected. */
+    const chosenPoint = sketch.moveMode
+      ? points.find((p) => p.name === selectedPoint) : undefined;
+    if (chosenPoint) {
+      const span = Math.max(box.getSize(new THREE.Vector3()).length(), 1);
+      const arm = Math.min(Math.max(span * 0.09, 0.18), 0.7);
+      const seat = at(chosenPoint.x, chosenPoint.y, chosenPoint.z);
+      const AXES: [number, number, number, number][] = [
+        [1, 0, 0, 0xc0483c], [0, 1, 0, 0x3f7d4e], [0, 0, 1, 0x3a6ea5],
+      ];
+      for (const [ax, ay, az, color] of AXES) {
+        const dir = new THREE.Vector3(ax, ay, az);
+        const group = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({ color, depthTest: false });
+        const shaft = new THREE.Mesh(
+          new THREE.CylinderGeometry(arm * 0.035, arm * 0.035, arm, 12), mat);
+        shaft.position.y = arm / 2;
+        const head = new THREE.Mesh(
+          new THREE.ConeGeometry(arm * 0.1, arm * 0.26, 14), mat);
+        head.position.y = arm + arm * 0.13;
+        group.add(shaft, head);
+        // The cylinder is built along its own Y; turn it onto the survey axis.
+        group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        group.position.copy(seat);
+        group.renderOrder = 4;
+        group.traverse((o) => { o.renderOrder = 4; o.userData.axis = dir; });
+        group.userData.axis = dir;
+        s.sketch.add(group);
+        s.arrows.push(group);
+      }
     }
 
     // Only reframe when the view actually changes what it is showing. Picking
@@ -812,7 +861,76 @@ export default function Viewport({
       return (hit?.object.userData.seg as [string, string]) ?? null;
     };
 
+    /* ---- dragging a point along one axis ---- */
+
+    const arrowUnder = (e: PointerEvent): THREE.Vector3 | null => {
+      if (!s.sketch.visible || !s.arrows.length) return null;
+      aim(e);
+      const hit = ray.intersectObjects(s.arrows, true)[0];
+      return (hit?.object.userData.axis as THREE.Vector3) ?? null;
+    };
+
+    // Where the pointer ray comes closest to the handle's own line. Two skew
+    // lines in space have exactly one such place, so the point tracks the
+    // finger along the axis and does not budge off it.
+    const alongAxis = (origin: THREE.Vector3, axis: THREE.Vector3): number | null => {
+      const w0 = new THREE.Vector3().subVectors(ray.ray.origin, origin);
+      const b = ray.ray.direction.dot(axis);          // both are unit vectors
+      const denom = 1 - b * b;
+      if (Math.abs(denom) < 1e-4) return null;        // sighting down the axis
+      return (axis.dot(w0) - b * ray.ray.direction.dot(w0)) / denom;
+    };
+
+    let drag: {
+      name: string; axis: THREE.Vector3; start: number;
+      base: THREE.Vector3; objects: THREE.Object3D[];
+    } | null = null;
+
+    const dragStart = (e: PointerEvent): boolean => {
+      const axis = arrowUnder(e);
+      const name = cb.current.sketch?.selectedPoint;
+      if (!axis || !name) return false;
+      const seat = s.arrows[0].position.clone();
+      // The handle is drawn in the sketch group; the ray is in world space.
+      const world = s.sketch.localToWorld(seat.clone());
+      const worldAxis = axis.clone().applyQuaternion(s.pivot.quaternion).normalize();
+      const at = alongAxis(world, worldAxis);
+      if (at === null) return false;
+      drag = {
+        name, axis: worldAxis, start: at, base: world,
+        objects: [...s.arrows, ...s.dots.filter((d) => d.userData.name === name)],
+      };
+      s.controls.enabled = false;
+      el.setPointerCapture?.(e.pointerId);
+      return true;
+    };
+
+    const dragMove = (e: PointerEvent) => {
+      if (!drag) return;
+      aim(e);
+      const at = alongAxis(drag.base, drag.axis);
+      if (at === null) return;
+      const shift = drag.axis.clone().multiplyScalar(at - drag.start);
+      const local = shift.clone().applyQuaternion(s.pivot.quaternion.clone().invert());
+      for (const o of drag.objects) o.position.add(local);
+      drag.base.add(shift);
+      drag.start = at;
+    };
+
+    const dragEnd = (e: PointerEvent) => {
+      if (!drag) return;
+      const seat = s.sketch.localToWorld(s.arrows[0].position.clone());
+      const at = s.pivot.worldToLocal(seat).add(s.sketchMid).divideScalar(CM);
+      const { name } = drag;
+      drag = null;
+      s.controls.enabled = true;
+      el.releasePointerCapture?.(e.pointerId);
+      cb.current.sketch?.onMovePoint?.(
+        name, [round2(at.x), round2(at.y), round2(at.z)]);
+    };
+
     const move = (e: PointerEvent) => {
+      if (drag) { dragMove(e); return; }
       if (s.inside) {
         if (pinch.has(e.pointerId)) {
           pinch.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -837,7 +955,8 @@ export default function Viewport({
         return;
       }
       if (s.sketch.visible) {
-        el.style.cursor = dotUnder(e) || lineUnder(e) ? "pointer" : "grab";
+        el.style.cursor = arrowUnder(e) ? "move"
+          : dotUnder(e) || lineUnder(e) ? "pointer" : "grab";
         return;
       }
       const id = faceUnder(e);
@@ -883,6 +1002,9 @@ export default function Viewport({
         el.setPointerCapture?.(e.pointerId);
       }
       downAt = { x: e.clientX, y: e.clientY };
+      // A handle wins over everything: it is only there because the operator
+      // turned it on, and it is drawn over the point it belongs to.
+      if (dragStart(e)) return;
       // Pressing a point selects it. The camera must not move underneath the
       // click, so orbiting is switched off for the whole gesture.
       onDot = !!dotUnder(e);
@@ -890,6 +1012,7 @@ export default function Viewport({
     };
 
     const up = (e: PointerEvent) => {
+      if (drag) { dragEnd(e); return; }
       const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4;
       if (s.inside) {
         pinch.delete(e.pointerId);
@@ -953,6 +1076,7 @@ export default function Viewport({
     };
 
     const cancel = (e: PointerEvent) => {
+      if (drag) { drag = null; s.controls.enabled = true; }
       if (!s.inside) s.controls.enabled = true;
       else {
         pinch.delete(e.pointerId);
@@ -981,6 +1105,9 @@ export default function Viewport({
 }
 
 /* ---------------- helpers ---------------- */
+
+/** Survey centimetres, to the millimetre. Nobody drags to a micron. */
+function round2(v: number): number { return Math.round(v * 100) / 100; }
 
 function clear(group: THREE.Group, s: Scene) {
   for (const child of [...group.children]) {

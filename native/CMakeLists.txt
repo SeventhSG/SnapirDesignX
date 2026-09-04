@@ -26,6 +26,7 @@ set(CORE_SOURCES
   src/topology.cpp
   src/parser.cpp
   src/elements.cpp
+  src/importx.cpp
 )
 
 if(SNAPIR_WITH_OCCT)

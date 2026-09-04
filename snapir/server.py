@@ -27,7 +27,7 @@ from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.3.12")
+app = FastAPI(title="Snapir Design X", version="1.3.13")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -60,6 +60,46 @@ def _apply_overrides(pid: str, room: Room) -> Room:
     ov = store.get(pid).overrides.get(room.name)
     if not ov:
         return room
+    if ov.imported_sketch:
+        # The drawing that came back from Design X, before anything else: its
+        # points have to be in the room for a ring, a line or a role override
+        # to be able to name one. Points that matched a shot on the way out
+        # kept that shot's name, so most of this record is lines.
+        from .model import Point, Role
+        have = {p.name for p in room.points}
+        for i, d in enumerate(ov.imported_sketch.get("points", [])):
+            if d.get("name") in have:
+                continue
+            try:
+                role = Role(d.get("role", "unknown"))
+            except ValueError:
+                role = Role.UNKNOWN
+            room.points.append(Point(
+                name=d["name"], x=float(d["x"]), y=float(d["y"]),
+                z=float(d.get("z", room.floor_z or 0.0)), layer="", role=role,
+                index=20_000 + i, derived=True,
+                source=str(d.get("from", "Design X"))))
+        segs = {tuple(sorted(s)) for s in room.segments}
+        for a, b in ov.imported_sketch.get("segments", []):
+            if tuple(sorted((a, b))) not in segs:
+                room.segments.append((a, b))
+                segs.add(tuple(sorted((a, b))))
+    if ov.moved_points:
+        # A point picked up and put somewhere else. Everything the room is
+        # worked out from - the ring, the openings, the lines - reads the
+        # moved position, so this has to land before any of that is derived.
+        for p in room.points:
+            xyz = ov.moved_points.get(p.name)
+            if not xyz or len(xyz) != 3:
+                continue
+            p.x, p.y, p.z = float(xyz[0]), float(xyz[1]), float(xyz[2])
+            p.moved = True
+    if ov.imported_sketch or ov.moved_points:
+        # Lines came in, or a corner is somewhere else than it was shot. Either
+        # way the room no longer follows from what the classifier decided on
+        # the first pass, so it is worked out again from where things now are.
+        from .parser import reread_topology
+        reread_topology(room)
     if ov.derived_points:
         # Constructed points join the room before anything else is layered on,
         # so a ring, a line or an opening can be built through them. They are
@@ -103,6 +143,15 @@ def _apply_overrides(pid: str, room: Room) -> Room:
         # from the old reading is worked out again.
         from .parser import apply_roles
         apply_roles(room, ov.role_overrides)
+    ring = list((ov.imported_sketch or {}).get("outline") or [])
+    if len(ring) >= 3 and not ov.outline_order:
+        # The floor loop as it came back from Design X. It only wins where the
+        # operator has not drawn a ring of their own in the app - that is a
+        # later decision than the file, and the later one stands.
+        by_name = {p.name: p for p in room.points}
+        room.outline = [by_name[n] for n in ring if n in by_name]
+        room.outline_source = "Design X"
+        room.issues = [i for i in room.issues if i.code != "no-outline"]
     if ov.outline_order:
         # The operator can pull in any surveyed point, not just the ones the
         # classifier called a floor corner. Their ring wins outright.
@@ -199,7 +248,7 @@ def _room_json(room: Room, ov=None, folder: str = "") -> dict:
         "links": [list(l) for l in room.links],
         "points": [{"name": p.name, "x": p.x, "y": p.y, "z": p.z,
                     "role": p.role.value, "layer": p.layer,
-                    "derived": p.derived, "source": p.source}
+                    "derived": p.derived, "source": p.source, "moved": p.moved}
                    for p in room.points],
         # Where two drawn lines actually cross. The sketch offers each one as a
         # corner the operator can adopt; nothing is created behind their back.
@@ -351,6 +400,7 @@ class RoomPatch(BaseModel):
     faceThickness: dict[str, float] | None = None
     removedWalls: list[str] | None = None       # element keys, e.g. "wall:P_003|P_004"
     derivedPoints: list[dict] | None = None     # constructed corners: name/x/y/z/role/from
+    movedPoints: dict[str, list[float]] | None = None   # name -> [x, y, z], survey cm
 
 
 @app.patch("/projects/{pid}/rooms/{name}")
@@ -377,6 +427,12 @@ def patch_room(pid: str, name: str, body: RoomPatch):
         ov.removed_walls = body.removedWalls
     if body.derivedPoints is not None:
         ov.derived_points = body.derivedPoints
+    if body.movedPoints is not None:
+        # A point put back where it was shot is not "moved to its original
+        # place", it is not moved. Dropping the entry rather than storing the
+        # shot's own coordinates keeps the provenance list honest.
+        ov.moved_points = {k: [float(v[0]), float(v[1]), float(v[2])]
+                           for k, v in body.movedPoints.items() if v}
     if body.fixtureOverrides is not None:
         ov.fixture_overrides = body.fixtureOverrides
     if body.roleOverrides is not None:
@@ -561,6 +617,52 @@ def export_designx(pid: str, name: str, fmt: str = "iges"):
     except BuildError as e:
         raise HTTPException(422, str(e))
     return {"path": str(path), "bytes": Path(path).stat().st_size}
+
+
+class SketchImport(BaseModel):
+    path: str
+
+
+@app.post("/projects/{pid}/rooms/{name}/import-designx")
+def import_designx(pid: str, name: str, body: SketchImport):
+    """Take the sketch back from Design X, over the top of the old one.
+
+    The file replaces whatever the last import brought in rather than adding
+    to it, so importing the same drawing twice leaves the room where importing
+    it once did, and re-importing after another edit does not accumulate the
+    corners that were deleted in between.
+    """
+    from .importx import sketch_for
+    room = _room(pid, name)
+    try:
+        sketch = _quiet(sketch_for, room, body.path)
+    except BuildError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:                      # a file that is not a sketch
+        raise HTTPException(422, f"Could not read that sketch: {e}")
+
+    ov = store.override(pid, name)
+    ov.imported_sketch = sketch
+    # The ring that came in is the ring. A ring the operator drew before the
+    # trip to Design X described the old shape and would fight this one.
+    ov.outline_order = None
+    store.save()
+    _rooms.pop(pid, None)
+    out = _room_json(_room(pid, name), ov, store.get(pid).folder)
+    out["imported"] = {"points": len(sketch["points"]), "matched": sketch["matched"],
+                       "segments": len(sketch["segments"]),
+                       "outline": len(sketch["outline"]), "file": sketch["file"]}
+    return out
+
+
+@app.delete("/projects/{pid}/rooms/{name}/import-designx")
+def clear_designx(pid: str, name: str):
+    """Forget the imported sketch and go back to the survey as shot."""
+    ov = store.override(pid, name)
+    ov.imported_sketch = None
+    store.save()
+    _rooms.pop(pid, None)
+    return _room_json(_room(pid, name), ov, store.get(pid).folder)
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765):

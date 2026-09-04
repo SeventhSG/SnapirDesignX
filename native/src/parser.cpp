@@ -194,22 +194,41 @@ std::vector<std::pair<Jamb, Jamb>> pair_jambs(const std::vector<Jamb>& jambs,
   for (size_t i = 0; i < jambs.size(); ++i)
     edge_of[i] = project_onto_edges({jambs[i].x, jambs[i].y}, ring).edge;
 
+  const int n = static_cast<int>(ring.size());
   std::set<size_t> used;
   for (size_t i = 0; i < jambs.size(); ++i) {
     if (used.count(i)) continue;
     const Jamb& a = jambs[i];
     long long best = -1;
+    int best_rank = 0;
     double best_d = 0;
     for (size_t k = i + 1; k < jambs.size(); ++k) {
       if (used.count(k)) continue;
       const Jamb& b = jambs[k];
-      if (edge_of[i] != edge_of[k]) continue;
+      // A window in the corner of a room has one jamb on each of two walls by
+      // construction, and the pier between them is glass too. Those pair only
+      // across a shared corner, and only where no jamb on the same wall would
+      // do - otherwise every door on a short wall reaches round the corner
+      // looking for a partner.
+      int rank;
+      if (edge_of[i] == edge_of[k]) {
+        rank = 0;
+      } else if ((edge_of[i] + 1) % n == edge_of[k] ||
+                 (edge_of[k] + 1) % n == edge_of[i]) {
+        rank = 1;
+      } else {
+        continue;
+      }
       const double width =
           std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
       if (!(width >= 25.0 && width <= kMaxOpeningWidth)) continue;
       if (std::abs(a.z_top - b.z_top) > 25.0 || std::abs(a.z_bottom - b.z_bottom) > 40.0)
         continue;
-      if (best < 0 || width < best_d) { best = static_cast<long long>(k); best_d = width; }
+      if (best < 0 || rank < best_rank || (rank == best_rank && width < best_d)) {
+        best = static_cast<long long>(k);
+        best_rank = rank;
+        best_d = width;
+      }
     }
     if (best >= 0) {
       used.insert(i);
@@ -367,6 +386,20 @@ void detect_pervaz(Room& room) {
 void attach_depth_points(Room& room) {
   std::vector<Pt> ring;
   for (const auto& p : room.outline) ring.push_back(xy(p));
+  // On the inferred path the ring has not been assembled yet, and without one
+  // there is no telling which side of a wall is the room. The sign of the
+  // depth then fell out of how the outline happened to be wound and which jamb
+  // came first, so a boiler standing in the room could just as well be read as
+  // a recess cut into the wall behind it. The floor shots in survey order are
+  // the ring, in every practical sense, and are enough to decide.
+  if (ring.empty()) {
+    std::vector<const Point*> floors;
+    for (const auto& p : room.points)
+      if (p.role == Role::Floor) floors.push_back(&p);
+    std::stable_sort(floors.begin(), floors.end(),
+                     [](const Point* a, const Point* b) { return a->index < b->index; });
+    for (const Point* p : floors) ring.push_back(xy(*p));
+  }
 
   for (auto& op : room.openings) {
     const double ax = op.left.x, ay = op.left.y;

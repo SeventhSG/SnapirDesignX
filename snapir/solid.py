@@ -16,7 +16,7 @@ from pathlib import Path
 
 from shapely.geometry import Polygon
 
-from .geometry import ensure_ccw, project_onto_edges
+from .geometry import ensure_ccw, project_onto_edges, self_intersections
 from .model import Jamb, Opening, Room
 from .planes import Plane, fit_or_level, level_plane
 from .settings import BuildSettings
@@ -154,6 +154,63 @@ def _offset_ring(ring, distance: float):
     return list(grown.exterior.coords)[:-1]
 
 
+def _corner_walk(ring, ea: int, eb: int) -> list[int] | None:
+    """The ring corners lying between two edges, the short way round.
+
+    A window in the corner of a room has one jamb on each of two walls, and
+    everything between them - including the pier where the walls meet - is
+    glass. Which corners those are depends on which way round the ring you
+    walk, and only one of the two answers is the window.
+    """
+    n = len(ring)
+    fwd = [(ea + 1 + k) % n for k in range((eb - ea) % n)]
+    back = [(ea - k) % n for k in range((ea - eb) % n)]
+    walk = fwd if len(fwd) <= len(back) else back
+    # Two corners is a bay; more than that and the "opening" is really the
+    # classifier having paired two jambs that belong to different holes.
+    return walk if len(walk) <= 2 else None
+
+
+def _wrapped_cutter(op: Opening, ring, seats, edges, cfg: BuildSettings, occ):
+    """The cutter for an opening that turns a corner.
+
+    A single box between the two jambs would slice the corner off on the
+    diagonal and leave the pier standing on one side of it. Instead the cut
+    follows the wall: the band runs along the inner face from jamb to jamb,
+    around every corner in between, and is pushed through the wall on the
+    mitre, so the corner empties along with the two returns.
+    """
+    corners = _corner_walk(ring, edges[0], edges[1])
+    if corners is None:
+        return None
+    reach = cm(cfg.wall_thickness) * 3.0
+    normal = _outward(ring)
+
+    inner: list[tuple[float, float]] = []
+    outer: list[tuple[float, float]] = []
+
+    def end(seat, edge):
+        a, b = ring[edge], ring[(edge + 1) % len(ring)]
+        (nx, ny), _t = normal(a, b)
+        return ((seat[0] - nx * reach, seat[1] - ny * reach),
+                (seat[0] + nx * reach, seat[1] + ny * reach))
+
+    i0, o0 = end(seats[0], edges[0])
+    inner.append(i0)
+    outer.append(o0)
+    for k in corners:
+        inner.append(_mitre_vertex(ring, k, -reach))
+        outer.append(_mitre_vertex(ring, k, reach))
+    i1, o1 = end(seats[1], edges[1])
+    inner.append(i1)
+    outer.append(o1)
+
+    footprint = inner + outer[::-1]
+    if self_intersections(footprint):
+        return None
+    return _prism(footprint, level_plane(op.sill), level_plane(op.head), occ)
+
+
 def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ):
     """A box spanning the wall at an opening, overshooting both faces."""
     reach = cm(cfg.wall_thickness) * 3.0
@@ -164,9 +221,22 @@ def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ):
     if length < 1.0:
         raise BuildError("opening jambs coincide")
 
+    ring = list(ring)
+    ea, sa, da = project_onto_edges((ax, ay), ring)
+    eb, sb, db = project_onto_edges((bx, by), ring)
+    # Only where both jambs actually sit on the walls they were matched to. A
+    # jamb further off than the wall is thick is not a corner window; it is a
+    # shot the ring never reached, and following the wall from a seat half a
+    # metre away from it would cut a hole nobody measured.
+    seated = max(da, db) <= cm(cfg.wall_thickness) * 2.0
+    if ea != eb and seated:
+        wrapped = _wrapped_cutter(op, ring, (sa, sb), (ea, eb), cfg, occ)
+        if wrapped is not None:
+            return wrapped
+
     nx, ny = -dy / length, dx / length          # wall normal, direction TBD
     cx, cy = (ax + bx) / 2, (ay + by) / 2
-    _edge, near, _d = project_onto_edges((cx, cy), list(ring))
+    _edge, near, _d = project_onto_edges((cx, cy), ring)
     if (near[0] - cx) * nx + (near[1] - cy) * ny < 0:
         nx, ny = -nx, -ny
 
