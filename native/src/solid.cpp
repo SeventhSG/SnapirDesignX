@@ -219,6 +219,38 @@ TopoDS_Shape removed_wall_opening(const std::vector<Pt>& ring, const Plane& floo
   return opening_cutter(op, ring, cfg);
 }
 
+// The wall stepping back above the skirting, which is what makes the board.
+//
+// The surveyor traces the board as two runs: the outer line at floor level,
+// which is the ring the room is built from, and the top of the board a few
+// centimetres up and a couple further out - the wall behind it.
+//
+// So the board is not added; it is what is left when the wall above it is taken
+// back to where the wall actually is. One band cut round the whole room, from
+// the top of the board to the ceiling, as deep as the board stands proud.
+bool pervaz_band(const Room& room, const std::vector<Pt>& ring, const Plane& floor,
+                 const Plane& ceiling, TopoDS_Shape& out) {
+  if (room.pervaz.empty()) return false;
+  double height = 0, depth = 0;
+  for (const auto& v : room.pervaz) {
+    height += v.height;
+    depth += v.depth;
+  }
+  height /= static_cast<double>(room.pervaz.size());
+  depth /= static_cast<double>(room.pervaz.size());
+  if (height <= 0 || depth <= 0) return false;
+
+  // Stop at the ceiling, not above it. Running past it takes the ceiling slab
+  // away over the whole room - three cubic metres and half the faces of a room,
+  // for want of an upper bound.
+  const double base = floor.pz + height;
+  const double top = ceiling.pz;
+  if (top - base < 1.0) return false;
+
+  out = prism(offset_ring(ring, depth), level_plane(base), level_plane(top));
+  return true;
+}
+
 // A box that hollows the wall back to the depth, and no further.
 //
 // The mouth overshoots into the room so the opening is clean at the face; the
@@ -759,6 +791,19 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
                                  " service point(s) did not meet any wall and were "
                                  "left out of the body.",
                              stray});
+  }
+
+  // The skirting, before anything is added to the walls: the board is what is
+  // left standing when the wall above it steps back to its own face.
+  if (cfg.include_pervaz && !room.pervaz.empty()) {
+    TopoDS_Shape band;
+    if (pervaz_band(room, inner_ring, floor, ceiling, band)) {
+      BRepAlgoAPI_Cut c(shape, band);
+      c.Build();
+      if (!c.IsDone())
+        throw BuildError(room.name + ": could not set the wall back above the skirting");
+      shape = c.Shape();
+    }
   }
 
   if (cfg.include_stairs && !room.stairs.empty()) {

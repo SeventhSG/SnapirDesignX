@@ -278,6 +278,17 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
                 f"{len(stray)} service point(s) did not meet any wall and were "
                 "left out of the body.", points=stray))
 
+    # The skirting, before anything is added to the walls: the board is what
+    # is left standing when the wall above it steps back to its own face.
+    if cfg.include_pervaz and room.pervaz:
+        band = _pervaz_band(room, inner_ring, floor, ceiling, cfg, occ)
+        if band is not None:
+            c = occ["Cut"](shape, band)
+            c.Build()
+            if not c.IsDone():
+                raise BuildError(f"{room.name}: could not set the wall back above the skirting")
+            shape = c.Shape()
+
     if cfg.include_stairs and room.stairs:
         for step, body in enumerate(_stairs_bodies(room, cfg, floor, occ)):
             f = occ["Fuse"](shape, body)
@@ -304,6 +315,36 @@ def _removed_wall_opening(ring, floor: Plane, ceiling: Plane, i: int,
     left = Jamb(x=ax, y=ay, z_bottom=floor.z_at(ax, ay), z_top=ceiling.z_at(ax, ay))
     right = Jamb(x=bx, y=by, z_bottom=floor.z_at(bx, by), z_top=ceiling.z_at(bx, by))
     return _opening_cutter(Opening(left=left, right=right, kind="removed"), ring, cfg, occ)
+
+
+def _pervaz_band(room: Room, ring, floor: Plane, ceiling: Plane,
+                 cfg: BuildSettings, occ):
+    """The wall stepping back above the skirting, which is what makes the board.
+
+    The surveyor traces the board as two runs: the outer line at floor level,
+    which is the ring the room is built from, and the top of the board a few
+    centimetres up and a couple of centimetres further out - the wall behind
+    it.
+
+    So the board is not added; it is what is left when the wall above it is
+    taken back to where the wall actually is. One band cut round the whole
+    room, from the top of the board to the ceiling, as deep as the board stands
+    proud. Below that line the wall stays out at the surveyed face, and that
+    ledge is the skirting.
+    """
+    height = sum(v.height for v in room.pervaz) / len(room.pervaz)
+    depth = sum(v.depth for v in room.pervaz) / len(room.pervaz)
+    if height <= 0 or depth <= 0:
+        return None
+
+    # Stop at the ceiling, not above it. Running past it takes the ceiling slab
+    # away over the whole room - three cubic metres and half the faces of a
+    # room, for want of an upper bound.
+    base = floor.pz + height
+    top = ceiling.pz
+    if top - base < 1.0:
+        return None
+    return _prism(_offset_ring(ring, depth), level_plane(base), level_plane(top), occ)
 
 
 def _recess_cutter(op: Opening, ring, cfg: BuildSettings, occ):

@@ -29,6 +29,10 @@ class BuildSettings:
     confirm_openings_per_room: bool = True
     door_sill_max: float = 80.0          # sill at or under this reads as a door
 
+    # Skirting, where the surveyor traced it as two runs: the board is what is
+    # left standing when the wall above it steps back to its own face.
+    include_pervaz: bool = True
+
     # Stairs. Only the nosing line is shot, so the flight is given a width
     # rather than measured across - there is nothing else to derive it from.
     include_stairs: bool = True

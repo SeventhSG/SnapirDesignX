@@ -49,7 +49,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.10";
+constexpr const char* kVersion = "1.3.11";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -157,6 +157,7 @@ Json settings_to_json(const BuildSettings& c) {
               {"confirm_openings_per_room", c.confirm_openings_per_room},
               {"door_sill_max", c.door_sill_max},
               {"include_fixtures", c.include_fixtures},
+              {"include_pervaz", c.include_pervaz},
               {"include_stairs", c.include_stairs},
               {"stair_width", c.stair_width},
               {"include_fittings", c.include_fittings},
@@ -200,6 +201,7 @@ void apply_settings_json(BuildSettings& c, const Json& j) {
   flag("confirm_openings_per_room", c.confirm_openings_per_room);
   num("door_sill_max", c.door_sill_max);
   flag("include_fixtures", c.include_fixtures);
+  flag("include_pervaz", c.include_pervaz);
   flag("include_stairs", c.include_stairs);
   num("stair_width", c.stair_width);
   flag("include_fittings", c.include_fittings);

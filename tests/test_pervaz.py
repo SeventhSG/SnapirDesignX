@@ -123,3 +123,35 @@ def test_skirting_is_found_when_the_ring_came_from_drawn_lines(tmp_path):
         assert v.depth == pytest.approx(3.1, abs=0.2)
     # And the ring is still the outer line, not doubled by the upper one.
     assert len(room.outline) == 4
+
+
+def test_the_board_is_actually_built():
+    # Detection was reported for weeks while nothing was ever built: `pervaz`
+    # appeared nowhere in the solid builder, so every room came back with a
+    # plain wall meeting a plain floor.
+    from snapir.settings import BuildSettings
+    from snapir.solid import build_room, solid_stats
+
+    room = _room()
+    assert len(room.pervaz) == 4
+    plain = solid_stats(build_room(room, BuildSettings(include_pervaz=False)))
+    board = solid_stats(build_room(room, BuildSettings()))
+
+    # The wall steps back above the board, so there is less material, not more.
+    assert board["volume_m3"] < plain["volume_m3"]
+    assert board["solids"] == 1
+    # And not by much: a couple of centimetres off one storey of wall.
+    taken = plain["volume_m3"] - board["volume_m3"]
+    assert 0.0 < taken < plain["volume_m3"] * 0.15
+
+
+def test_the_ceiling_survives_the_skirting():
+    # The band once ran past the ceiling and took the slab with it - three
+    # cubic metres and half the faces of the room.
+    from snapir.settings import BuildSettings
+    from snapir.solid import build_room, solid_stats
+
+    room = _room()
+    plain = solid_stats(build_room(room, BuildSettings(include_pervaz=False)))
+    board = solid_stats(build_room(room, BuildSettings()))
+    assert board["faces"] >= plain["faces"] * 0.5

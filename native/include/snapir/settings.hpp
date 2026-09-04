@@ -30,6 +30,10 @@ struct BuildSettings {
   // anchored to the wall it belongs to, never left floating.
   bool include_fixtures = true;
 
+  // Skirting, where the surveyor traced it as two runs: the board is what is
+  // left standing when the wall above it steps back to its own face.
+  bool include_pervaz = true;
+
   // Stairs. Only the nosing line is shot, so the flight is given a width rather
   // than measured across - there is nothing else to derive it from.
   bool include_stairs = true;
