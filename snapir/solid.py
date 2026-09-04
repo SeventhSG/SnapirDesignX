@@ -238,28 +238,35 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
                 raise BuildError(f"{room.name}: opening cut failed")
             shape = c.Shape()
 
-    # A recess is hollowed out of the wall rather than punched through it, so
-    # it is cut whether or not doorways are being cut at all.
+    # What each rectangle is shaped like comes from what was measured, not from
+    # its name alone: a shot on each side means it is let into the wall and
+    # stands out of it at once, so both happen to the same rectangle. A recess
+    # is hollowed rather than punched through, so it is cut whether or not
+    # doorways are being cut at all.
     if cfg.include_fittings:
-        for op in (o for o in rects if o.recesses):
-            c = occ["Cut"](shape, _recess_cutter(op, inner_ring, cfg, occ))
-            c.Build()
-            if not c.IsDone():
-                raise BuildError(f"{room.name}: could not hollow out the recess")
-            shape = c.Shape()
-
-    if cfg.include_fittings:
-        for op in (o for o in rects
-                   if not o.cuts and not o.recesses and o.kind != "empty"):
-            try:
-                body = _fitting_body(op, inner_ring, cfg, occ)
-            except (BuildError, RuntimeError):
+        for op in rects:
+            if op.cuts or op.kind == "empty":
                 continue
-            f = occ["Fuse"](shape, body)
-            f.Build()
-            if not f.IsDone():
-                raise BuildError(f"{room.name}: could not place the {op.kind}")
-            shape = f.Shape()
+
+            if op.in_depth or (op.recesses and not op.measured):
+                c = occ["Cut"](shape, _recess_cutter(op, inner_ring, cfg, occ))
+                c.Build()
+                if not c.IsDone():
+                    raise BuildError(f"{room.name}: could not hollow out the recess")
+                shape = c.Shape()
+
+            # Outward when it was measured that way, or when nothing was
+            # measured at all and the settings have to say.
+            if op.out_depth or not op.measured and not op.recesses:
+                try:
+                    body = _fitting_body(op, inner_ring, cfg, occ)
+                except (BuildError, RuntimeError):
+                    continue
+                f = occ["Fuse"](shape, body)
+                f.Build()
+                if not f.IsDone():
+                    raise BuildError(f"{room.name}: could not place the {op.kind}")
+                shape = f.Shape()
 
     if cfg.include_fixtures:
         shape, stray = _add_fixtures(shape, room, inner_ring, cfg, occ,
@@ -309,7 +316,7 @@ def _recess_cutter(op: Opening, ring, cfg: BuildSettings, occ):
     cx, cy = (op.left.x + op.right.x) / 2, (op.left.y + op.right.y) / 2
     (sx, sy), (nx, ny), (tx, ty), _dist = _wall_frame(cx, cy, ring)
 
-    back = -abs(op.depth) if op.depth else -cm(cfg.panel_depth)
+    back = -(op.in_depth or cm(cfg.panel_depth))
     mouth = cm(cfg.wall_thickness)      # overshoot into the room, cut cleanly
     half = max(op.width, 1.0) / 2
     corners = [
@@ -335,7 +342,7 @@ def _fitting_body(op: Opening, ring, cfg: BuildSettings, occ):
     # A shot in the middle of the rectangle measured how far the thing sticks
     # out. Where the surveyor took one it wins outright; the settings are only
     # for rectangles nobody measured the depth of.
-    depth = op.depth if op.depth else {
+    depth = op.out_depth or {
         "boiler": cm(cfg.boiler_depth), "lamp": cm(cfg.lamp_depth),
     }.get(op.kind, cm(cfg.panel_depth))
     # Every fitting reaches a little way into the wall. Sitting exactly on the

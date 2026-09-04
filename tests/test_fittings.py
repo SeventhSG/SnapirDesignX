@@ -120,8 +120,8 @@ def test_the_middle_shot_measures_the_depth():
     room = _room_with_depth_shot(off=35.0)
     assert len(room.openings) == 1
     op = room.openings[0]
-    assert op.depth == pytest.approx(35.0, abs=0.01)
-    assert op.depth_point == "P_013"
+    assert op.out_depth == pytest.approx(35.0, abs=0.01)
+    assert op.depth_points == ["P_013"]
 
     # And it stops being an unresolved shot the operator has to look at.
     assert not any(i.code == "unclassified" for i in room.issues)
@@ -144,7 +144,7 @@ def test_a_measured_depth_beats_the_setting():
 
 def test_without_a_middle_shot_the_setting_is_used():
     room = _room_with_rectangle()
-    assert room.openings[0].depth is None
+    assert not room.openings[0].measured
 
 
 def test_a_depth_shot_means_an_object_not_a_hole():
@@ -198,7 +198,8 @@ def test_a_dot_inside_the_wall_hollows_it_out():
     room = _room_with_depth_shot(off=-8.0)
     op = room.openings[0]
     assert op.kind == "niche"
-    assert op.depth == pytest.approx(-8.0, abs=0.01)
+    assert op.in_depth == pytest.approx(8.0, abs=0.01)
+    assert op.out_depth is None
     assert op.recesses and not op.cuts
 
 
@@ -251,4 +252,70 @@ def test_the_depth_survives_a_rebuild():
     assert room.openings[0].kind == "object"
     rebuild(room)
     assert room.openings[0].kind == "object", "the object reverted to a hole"
-    assert room.openings[0].depth == pytest.approx(35.0, abs=0.01)
+    assert room.openings[0].out_depth == pytest.approx(35.0, abs=0.01)
+
+
+def _room_with_two_dots(out_off: float = 30.0, in_off: float = -7.0):
+    """A rectangle let into the wall and standing out of it at once."""
+    rows = ["Kimlik;X (cm);Y (cm);Z (cm);Katman"]
+    for i, (x, y) in enumerate([(0, 0), (400, 0), (400, 300), (0, 300)], 1):
+        rows.append(f"P_{i:03d};{x:.2f};{y:.2f};0.00;Zemin")
+    for i, (x, y) in enumerate([(0, 0), (400, 0), (400, 300), (0, 300)], 5):
+        rows.append(f"P_{i:03d};{x:.2f};{y:.2f};280.00;")
+    n = 9
+    for x in (150.0, 210.0):
+        for z in (120.0, 220.0):
+            rows.append(f"P_{n:03d};{x:.2f};0.00;{z:.2f};Katman 0")
+            n += 1
+    rows.append(f"P_{n:03d};180.00;{out_off:.2f};170.00;Katman 0")
+    n += 1
+    rows.append(f"P_{n:03d};180.00;{in_off:.2f};170.00;Katman 0")
+    p = Path(tempfile.mkdtemp()) / "Both.csv"
+    p.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return read_room(p)
+
+
+def test_two_dots_are_kept_one_per_side():
+    room = _room_with_two_dots(out_off=30.0, in_off=-7.0)
+    op = room.openings[0]
+    assert op.out_depth == pytest.approx(30.0, abs=0.01)
+    assert op.in_depth == pytest.approx(7.0, abs=0.01)
+    assert len(op.depth_points) == 2
+    # Neither shot is left for the operator to rule on.
+    assert not any(i.code == "unclassified" for i in room.issues)
+
+
+def test_two_dots_build_in_both_directions():
+    from snapir.solid import build_room, solid_stats
+
+    cfg = BuildSettings()
+    bare = _room_with_two_dots()
+    bare.openings = []
+    plain = solid_stats(build_room(bare, cfg))["volume_m3"]
+
+    both = solid_stats(build_room(_room_with_two_dots(30.0, -7.0), cfg))
+    only_out = solid_stats(build_room(_room_with_depth_shot(30.0), cfg))["volume_m3"]
+
+    assert both["solids"] == 1
+    # The box added out to 30 cm, and the wall hollowed back 7 cm behind it -
+    # so it carries less material than the same box on an untouched wall.
+    assert both["volume_m3"] > plain
+    assert both["volume_m3"] < only_out
+
+
+def test_the_further_shot_on_a_side_wins():
+    # Two shots on the same side describe one object; the far one is its face.
+    room = _room_with_two_dots(out_off=30.0, in_off=-7.0)
+    room2 = _room_with_two_dots(out_off=55.0, in_off=-7.0)
+    assert room2.openings[0].out_depth > room.openings[0].out_depth
+    assert room2.openings[0].in_depth == pytest.approx(7.0, abs=0.01)
+
+
+def test_two_dots_survive_a_rebuild():
+    from snapir.parser import rebuild
+
+    room = _room_with_two_dots(30.0, -7.0)
+    rebuild(room)
+    op = room.openings[0]
+    assert op.out_depth == pytest.approx(30.0, abs=0.01)
+    assert op.in_depth == pytest.approx(7.0, abs=0.01)

@@ -230,7 +230,7 @@ TopoDS_Shape recess_cutter(const Opening& op, const std::vector<Pt>& ring,
   const double cy = (op.left.y + op.right.y) / 2;
   const WallFrame w = wall_frame(cx, cy, ring);
 
-  const double back = op.depth ? -std::fabs(*op.depth) : -cm(cfg.panel_depth);
+  const double back = -(op.in_depth ? *op.in_depth : cm(cfg.panel_depth));
   const double mouth = cm(cfg.wall_thickness);  // overshoot, so the face cuts clean
   const double half = std::max(op.width(), 1.0) / 2;
   const std::vector<Pt> corners = {
@@ -261,7 +261,7 @@ TopoDS_Shape fitting_body(const Opening& op, const std::vector<Pt>& ring,
   // A shot in the middle of the rectangle measured how far the thing sticks
   // out. Where the surveyor took one it wins outright; the settings are only
   // for rectangles nobody measured the depth of.
-  const double depth = op.depth ? *op.depth
+  const double depth = op.out_depth      ? *op.out_depth
                        : op.kind == "boiler" ? cm(cfg.boiler_depth)
                        : op.kind == "lamp"   ? cm(cfg.lamp_depth)
                                              : cm(cfg.panel_depth);
@@ -689,32 +689,38 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
     }
   }
 
-  // A recess is hollowed out of the wall rather than punched through it, so it
-  // is cut whether or not doorways are being cut at all.
+  // What each rectangle is shaped like comes from what was measured, not from
+  // its name alone: a shot on each side means it is let into the wall and
+  // stands out of it at once, so both happen to the same rectangle. A recess is
+  // hollowed rather than punched through, so it is cut whether or not doorways
+  // are being cut at all.
   if (cfg.include_fittings) {
     for (const auto& op : rects) {
-      if (!op.recesses()) continue;
-      BRepAlgoAPI_Cut c(shape, recess_cutter(op, inner_ring, cfg));
-      c.Build();
-      if (!c.IsDone()) throw BuildError(room.name + ": could not hollow out the recess");
-      shape = c.Shape();
-    }
-  }
+      if (op.cuts() || op.kind == "empty") continue;
 
-  if (cfg.include_fittings) {
-    for (const auto& op : rects) {
-      if (op.cuts() || op.recesses() || op.kind == "empty") continue;
-      TopoDS_Shape body;
-      try {
-        body = fitting_body(op, inner_ring, cfg);
-      } catch (const std::exception&) {
-        continue;
+      if (op.in_depth || (op.recesses() && !op.measured())) {
+        BRepAlgoAPI_Cut c(shape, recess_cutter(op, inner_ring, cfg));
+        c.Build();
+        if (!c.IsDone())
+          throw BuildError(room.name + ": could not hollow out the recess");
+        shape = c.Shape();
       }
-      BRepAlgoAPI_Fuse f(shape, body);
-      f.Build();
-      if (!f.IsDone())
-        throw BuildError(room.name + ": could not place the " + op.kind);
-      shape = f.Shape();
+
+      // Outward when it was measured that way, or when nothing was measured at
+      // all and the settings have to say.
+      if (op.out_depth || (!op.measured() && !op.recesses())) {
+        TopoDS_Shape body;
+        try {
+          body = fitting_body(op, inner_ring, cfg);
+        } catch (const std::exception&) {
+          continue;
+        }
+        BRepAlgoAPI_Fuse f(shape, body);
+        f.Build();
+        if (!f.IsDone())
+          throw BuildError(room.name + ": could not place the " + op.kind);
+        shape = f.Shape();
+      }
     }
   }
 

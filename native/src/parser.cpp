@@ -317,8 +317,12 @@ void attach_depth_points(Room& room) {
       }
     }
 
-    Point* best = nullptr;
-    double best_off = 0.0;
+    // One shot per side, kept apart: a rectangle can be let into the wall and
+    // stand out of it at once, and the nearest shot alone would only ever
+    // describe half of that.
+    Point* outward = nullptr;
+    Point* inward = nullptr;
+    double out_off = 0.0, in_off = 0.0;
     for (auto& p : room.points) {
       // Already-tagged depth shots are candidates too. After the first pass
       // the shot is no longer Unknown, and a detector that could not see it
@@ -330,23 +334,38 @@ void attach_depth_points(Room& room) {
       if (along < -kDepthEdgeTol || along > length + kDepthEdgeTol) continue;
       const double off = (p.x - ax) * nx + (p.y - ay) * ny;
       if (std::fabs(off) < kDepthMin || std::fabs(off) > kDepthMax) continue;
-      if (!best || std::fabs(off) < std::fabs(best_off)) {
-        best = &p;
-        best_off = off;
+      // The furthest shot on each side is the one that describes it: a nearer
+      // one is somewhere in the middle of the same object.
+      if (off > 0) {
+        if (!outward || std::fabs(off) > std::fabs(out_off)) {
+          outward = &p;
+          out_off = off;
+        }
+      } else if (!inward || std::fabs(off) > std::fabs(in_off)) {
+        inward = &p;
+        in_off = off;
       }
     }
 
-    if (best) {
-      op.depth = best_off;
-      op.depth_point = best->name;
-      best->role = Role::Depth;
-      // The shot itself says what this is. Nobody measures how far a doorway
-      // sticks out of a wall, so a rectangle with a depth shot is a thing
-      // standing on the wall - and the wall behind it stays whole. An
-      // operator's own choice still overrides this later.
-      if (op.kind == "door" || op.kind == "window" || op.kind == "unknown")
-        op.kind = best_off > 0 ? "object" : "niche";
+    op.depth_points.clear();
+    if (outward) {
+      outward->role = Role::Depth;
+      op.depth_points.push_back(outward->name);
+      op.out_depth = std::fabs(out_off);
     }
+    if (inward) {
+      inward->role = Role::Depth;
+      op.depth_points.push_back(inward->name);
+      op.in_depth = std::fabs(in_off);
+    }
+
+    // The shots themselves say what this is. Nobody measures how far a doorway
+    // sticks out of a wall, so a rectangle with one is a thing on the wall
+    // rather than a hole through it. An operator's own choice still overrides
+    // this later.
+    if (op.measured() &&
+        (op.kind == "door" || op.kind == "window" || op.kind == "unknown"))
+      op.kind = outward ? "object" : "niche";
   }
 }
 

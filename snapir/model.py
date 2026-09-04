@@ -97,11 +97,20 @@ class Opening:
     left: Jamb
     right: Jamb
     kind: str = "unknown"    # one of OPENING_KINDS, inferred or set by the user
-    # A shot in the middle of the rectangle, standing off the wall: how far the
-    # thing actually sticks out. Measured, so it beats any setting. None when
-    # the surveyor did not take one, and then the settings' depth is used.
-    depth: Optional[float] = None      # cm
-    depth_point: str = ""
+    # Shots in the middle of the rectangle, off the wall: how far the thing
+    # actually reaches. Measured, so they beat any setting. A rectangle can
+    # carry one on each side - a thing let into the wall and standing out of it
+    # at the same time - so they are kept apart rather than as one signed
+    # number. None on a side means the surveyor took no shot there, and then
+    # the settings' depth is used.
+    out_depth: Optional[float] = None   # cm it stands into the room
+    in_depth: Optional[float] = None    # cm it is let back into the wall
+    depth_points: list[str] = field(default_factory=list)
+
+    @property
+    def measured(self) -> bool:
+        """True when the surveyor measured either side of this rectangle."""
+        return self.out_depth is not None or self.in_depth is not None
 
     @property
     def cuts(self) -> bool:

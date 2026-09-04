@@ -356,7 +356,11 @@ def _attach_depth_points(room: Room) -> None:
             if not point_in_polygon((mid[0] + nx * 0.5, mid[1] + ny * 0.5), ring):
                 nx, ny = -nx, -ny
 
-        best: tuple[float, Point] | None = None
+        # One shot per side, kept apart: a rectangle can be let into the wall
+        # and stand out of it at once, and the nearest shot alone would only
+        # ever describe half of that.
+        outward: tuple[float, Point] | None = None
+        inward: tuple[float, Point] | None = None
         for p in room.points:
             # Already-tagged depth shots are candidates too. After the first
             # pass the shot is no longer UNKNOWN, and a detector that could not
@@ -373,19 +377,32 @@ def _attach_depth_points(room: Room) -> None:
             off = (p.x - ax) * nx + (p.y - ay) * ny
             if not (DEPTH_MIN <= abs(off) <= DEPTH_MAX):
                 continue
-            if best is None or abs(off) < abs(best[0]):
-                best = (off, p)
+            side = "outward" if off > 0 else "inward"
+            best = outward if side == "outward" else inward
+            # The furthest shot on each side is the one that describes it: a
+            # nearer one is somewhere in the middle of the same object.
+            if best is None or abs(off) > abs(best[0]):
+                if side == "outward":
+                    outward = (abs(off), p)
+                else:
+                    inward = (abs(off), p)
 
-        if best is not None:
-            op.depth, op.depth_point = best[0], best[1].name
-            best[1].role = Role.DEPTH
-            # The shot itself says what this is. Nobody measures how far a
-            # doorway sticks out of a wall, so a rectangle with a depth shot is
-            # a thing on the wall rather than a hole through it - standing in
-            # the room, or set back into the wall. An operator's own choice
-            # still overrides this later.
-            if op.kind in ("door", "window", "unknown"):
-                op.kind = "object" if best[0] > 0 else "niche"
+        op.depth_points = []
+        for found in (outward, inward):
+            if found is not None:
+                found[1].role = Role.DEPTH
+                op.depth_points.append(found[1].name)
+        if outward is not None:
+            op.out_depth = outward[0]
+        if inward is not None:
+            op.in_depth = inward[0]
+
+        # The shots themselves say what this is. Nobody measures how far a
+        # doorway sticks out of a wall, so a rectangle with one is a thing on
+        # the wall rather than a hole through it. An operator's own choice
+        # still overrides this later.
+        if op.measured and op.kind in ("door", "window", "unknown"):
+            op.kind = "niche" if outward is None else "object"
 
 
 def _step_move(a: Point, b: Point) -> str | None:

@@ -49,7 +49,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.4";
+constexpr const char* kVersion = "1.3.5";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -510,9 +510,13 @@ Json room_json(const Room& room, const RoomOverride* ov,
                             // rebuild.
                             {"key", opening_key(o)},
                             {"cuts", o.cuts()},
-                            // Measured off the middle shot, when there is one.
-                            {"depth", o.depth ? Json(round_to(*o.depth, 1)) : Json()},
-                            {"depthPoint", o.depth_point}});
+                            // Measured off the middle shots, when there are
+                            // any. A rectangle can carry one on each side.
+                            {"outDepth",
+                             o.out_depth ? Json(round_to(*o.out_depth, 1)) : Json()},
+                            {"inDepth",
+                             o.in_depth ? Json(round_to(*o.in_depth, 1)) : Json()},
+                            {"depthPoints", o.depth_points}});
   }
   j["openings"] = openings;
 

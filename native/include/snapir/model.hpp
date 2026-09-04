@@ -71,11 +71,17 @@ std::string kind_label(const std::string& kind);
 struct Opening {
   Jamb left, right;
   std::string kind = "unknown";  // one of opening_kinds(), inferred or set by the user
-  // A shot in the middle of the rectangle, standing off the wall: how far the
-  // thing actually sticks out. Measured, so it beats any setting. Unset when
-  // the surveyor did not take one, and then the settings' depth is used.
-  std::optional<double> depth;  // cm
-  std::string depth_point;
+  // Shots in the middle of the rectangle, off the wall: how far the thing
+  // actually reaches. Measured, so they beat any setting. A rectangle can carry
+  // one on each side - a thing let into the wall and standing out of it at the
+  // same time - so they are kept apart rather than as one signed number. Unset
+  // on a side means no shot there, and then the settings' depth is used.
+  std::optional<double> out_depth;  // cm it stands into the room
+  std::optional<double> in_depth;   // cm it is let back into the wall
+  std::vector<std::string> depth_points;
+
+  // True when the surveyor measured either side of this rectangle.
+  bool measured() const { return out_depth.has_value() || in_depth.has_value(); }
 
   double sill() const { return std::min(left.z_bottom, right.z_bottom); }
   double head() const { return std::max(left.z_top, right.z_top); }

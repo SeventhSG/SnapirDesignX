@@ -65,7 +65,8 @@ def main(folder: str) -> None:
             emit(f"opening[{i}]",
                  f"{o.kind} w={num(o.width)} sill={num(o.sill)} head={num(o.head)} "
                  f"L={num(o.left.x)},{num(o.left.y)} R={num(o.right.x)},{num(o.right.y)} "
-                 f"depth={num(o.depth) if o.depth else '-'}")
+                 f"out={num(o.out_depth) if o.out_depth else '-'} "
+                 f"in={num(o.in_depth) if o.in_depth else '-'}")
         # Flights and skirtings, spelled out rather than counted. Two cores can
         # tag the same points and still split them into different flights, and
         # a bare count would compare equal while the geometry differed.

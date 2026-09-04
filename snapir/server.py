@@ -27,7 +27,7 @@ from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.3.4")
+app = FastAPI(title="Snapir Design X", version="1.3.5")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -206,9 +206,11 @@ def _room_json(room: Room, ov=None, folder: str = "") -> dict:
             # What this rectangle is keyed on, so the operator's choice of
             # what it really is survives a rebuild.
             "key": _opening_key(o), "cuts": o.cuts,
-            # Measured off the middle shot when the surveyor took one.
-            "depth": round(o.depth, 1) if o.depth else None,
-            "depthPoint": o.depth_point,
+            # Measured off the middle shots, when the surveyor took them. A
+            # rectangle can carry one on each side at once.
+            "outDepth": round(o.out_depth, 1) if o.out_depth else None,
+            "inDepth": round(o.in_depth, 1) if o.in_depth else None,
+            "depthPoints": o.depth_points,
         } for i, o in enumerate(room.openings)],
         # Everything a wall rectangle is allowed to be. The survey cannot tell
         # a boiler from a window, so the picker is the answer, not a better
