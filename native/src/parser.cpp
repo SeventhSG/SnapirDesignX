@@ -220,6 +220,54 @@ std::vector<std::pair<Jamb, Jamb>> pair_jambs(const std::vector<Jamb>& jambs,
   return pairs;
 }
 
+// The floor corners, in shot order, on the room's own level.
+//
+// Two things a stairwell breaks that a flat room never does.
+//
+// The floor is where most of the floor shots are, not simply the lowest
+// reading: stand in a top-floor corridor and the lowest thing the instrument
+// sees is the landing one storey down. Taking that as the datum drags the
+// landing's corners into the ring and fits the floor plane through two levels.
+//
+// And a corner shot twice is one corner. Where a flight arrives at a wall the
+// last tread and the wall corner are the same place, read a few millimetres
+// apart, and the stub between them doubles the ring back on itself - which
+// reads as a self-intersection and blocks the build.
+std::vector<Point> ring_of(const Room& room) {
+  std::vector<Point> floor_pts;
+  for (const auto& p : room.points)
+    if (p.role == Role::Floor) floor_pts.push_back(p);
+  if (floor_pts.empty()) return {};
+  std::stable_sort(floor_pts.begin(), floor_pts.end(),
+                   [](const Point& a, const Point& b) { return a.index < b.index; });
+
+  std::vector<Point> by_z = floor_pts;
+  std::stable_sort(by_z.begin(), by_z.end(),
+                   [](const Point& a, const Point& b) { return a.z < b.z; });
+  std::vector<std::vector<const Point*>> bands;
+  for (const auto& p : by_z) {
+    if (!bands.empty() && p.z - bands.back().back()->z <= kZBandTol)
+      bands.back().push_back(&p);
+    else
+      bands.push_back({&p});
+  }
+  const auto& biggest = *std::max_element(
+      bands.begin(), bands.end(),
+      [](const auto& a, const auto& b) { return a.size() < b.size(); });
+  std::set<std::string> on_level;
+  for (const Point* p : biggest) on_level.insert(p->name);
+
+  std::vector<Point> ring;
+  for (const auto& p : floor_pts) {
+    if (!on_level.count(p.name)) continue;
+    if (!ring.empty() && dist2d(ring.back(), p) <= kCornerMerge) continue;
+    ring.push_back(p);
+  }
+  while (ring.size() > 2 && dist2d(ring.front(), ring.back()) <= kCornerMerge)
+    ring.pop_back();
+  return ring;
+}
+
 std::vector<Point> sorted_by_index(const Room& room, Role role) {
   std::vector<Point> out;
   for (const auto& p : room.points)
@@ -430,9 +478,18 @@ std::pair<size_t, int> stair_run(const std::vector<Point*>& pts, size_t start) {
 // its shots never land in the same XY cluster the way a jamb's do. Anything
 // shorter or less regular is left Unknown for the operator to tag by hand.
 void detect_stairs(Room& room) {
+  // Floor shots are candidates too, and that is not a detail. A surveyor tags a
+  // tread `Zemin` because a tread is a floor surface, so a whole flight arrives
+  // already claimed as outline corners. Left that way the ring climbs the
+  // stairs and crosses itself, and the risers - two shots a centimetre apart
+  // and sixteen high - are indistinguishable from skirting. A run of floor
+  // shots that climbs at a consistent riser is a staircase whatever layer it
+  // was written on.
   std::vector<Point*> pts;
   for (auto& p : room.points)
-    if (p.role == Role::Unknown && !p.pinned) pts.push_back(&p);
+    if ((p.role == Role::Unknown || p.role == Role::Floor ||
+         p.role == Role::Stairs) && !p.pinned)
+      pts.push_back(&p);
   std::stable_sort(pts.begin(), pts.end(),
                    [](const Point* a, const Point* b) { return a->index < b->index; });
 
@@ -658,9 +715,15 @@ void classify(Room& room) {
     }
   room.outline_source = tagged.empty() ? "inferred" : "surveyed layer";
 
-  // Before anything is clustered or ringed: a skirting pair is two floor shots
-  // at one corner, and both of them landing in the outline is what doubles the
-  // ring.
+  // Stairs first, and before skirting: a flight tagged `Zemin` is a run of
+  // floor shots, and whoever claims them first decides what they are. A riser
+  // looks exactly like a skirting board to the pair test, so the flight has to
+  // be recognised as a whole before anything reads it two points at a time.
+  detect_stairs(room);
+  room.stairs = group_stairs(room);
+
+  // Then the skirting: a pair is two floor shots at one corner, and both of
+  // them landing in the outline is what doubles the ring.
   detect_pervaz(room);
 
   // Ceiling shots must be claimed before anything is clustered. A ceiling
@@ -731,7 +794,7 @@ void classify(Room& room) {
   detect_stairs(room);
   room.stairs = group_stairs(room);
 
-  room.outline = sorted_by_index(room, Role::Floor);
+  room.outline = ring_of(room);
   room.ceiling = sorted_by_index(room, Role::Ceiling);
   room.controls.clear();
   for (const auto& p : room.points)
@@ -859,7 +922,7 @@ void rebuild(Room& room) {
   room.pervaz.clear();
   detect_pervaz(room);
 
-  room.outline = sorted_by_index(room, Role::Floor);
+  room.outline = ring_of(room);
   room.ceiling = sorted_by_index(room, Role::Ceiling);
   room.controls.clear();
   for (const auto& p : room.points)

@@ -24,6 +24,7 @@ inline constexpr double kCeilingTol = 18.0;       // ceilings are not flat; allo
 inline constexpr double kMinRoomHeight = 150.0;   // below this the high band is not a ceiling
 inline constexpr double kMinJambSpan = 40.0;      // a jamb must be taller than this
 inline constexpr double kJambXyTol = 12.0;        // two shots this close are one vertical
+inline constexpr double kCornerMerge = 2.5;      // two ring corners this close are one
 inline constexpr double kStationMergeCm = 5.0;    // re-levelled in place, not a new setup
 
 // A flight climbs at a near-constant riser and tread, shot in survey order as

@@ -47,6 +47,7 @@ CEILING_TOL = 18.0       # ceilings are not flat; allow real sag
 MIN_ROOM_HEIGHT = 150.0  # below this, the high band is not a ceiling
 MIN_JAMB_SPAN = 40.0     # a jamb has to be taller than this to be an opening
 JAMB_XY_TOL = 12.0       # two shots this close in plan are the same vertical
+CORNER_MERGE = 2.5       # two ring corners this close in plan are one corner
 
 # A flight climbs at a near-constant riser and tread, shot in survey order as
 # the surveyor walks up. Nothing else in a room survey produces that
@@ -179,9 +180,15 @@ def _classify(room: Room) -> None:
         p.role = Role.FLOOR
     room.outline_source = "surveyed layer" if tagged else "inferred"
 
-    # Before anything is clustered or ringed: a skirting pair is two floor
-    # shots at one corner, and both of them landing in the outline is what
-    # doubles the ring.
+    # Stairs first, and before skirting: a flight tagged `Zemin` is a run of
+    # floor shots, and whoever claims them first decides what they are. A riser
+    # looks exactly like a skirting board to the pair test, so the flight has to
+    # be recognised as a whole before anything reads it two points at a time.
+    _detect_stairs(room)
+    room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
+
+    # Then the skirting: a pair is two floor shots at one corner, and both of
+    # them landing in the outline is what doubles the ring.
     _detect_pervaz(room)
 
     # Ceiling shots must be claimed before anything is clustered. A ceiling
@@ -234,9 +241,7 @@ def _classify(room: Room) -> None:
     _detect_stairs(room)
     room.stairs = _group_stairs([p for p in room.points if p.role is Role.STAIRS])
 
-    room.outline = sorted(
-        (p for p in room.points if p.role is Role.FLOOR), key=lambda p: p.index
-    )
+    room.outline = _ring_of(room)
     room.ceiling = sorted(
         (p for p in room.points if p.role is Role.CEILING), key=lambda p: p.index
     )
@@ -475,8 +480,17 @@ def _detect_stairs(room: Room) -> None:
     height; anything shorter or less regular is left UNKNOWN, same as any
     other unresolved shot, for the operator to tag by hand.
     """
+    # Floor shots are candidates too, and that is not a detail. A surveyor
+    # tags a tread `Zemin` because a tread is a floor surface, so a whole
+    # flight arrives already claimed as outline corners. Left that way the ring
+    # climbs the stairs and crosses itself, and the risers - two shots a
+    # centimetre apart and sixteen high - are indistinguishable from skirting.
+    # A run of floor shots that climbs at a consistent riser is a staircase
+    # whatever layer it was written on.
     pts = sorted((p for p in room.points
-                  if p.role is Role.UNKNOWN and not p.pinned), key=lambda p: p.index)
+                  if p.role in (Role.UNKNOWN, Role.FLOOR, Role.STAIRS)
+                  and not p.pinned),
+                 key=lambda p: p.index)
     i = 0
     while i < len(pts) - 1:
         end, risers = _stair_run(pts, i)
@@ -518,6 +532,47 @@ def _group_stairs(points: list[Point]) -> list[Stair]:
         kind, risers = _run_shape(r)
         out.append(Stair(points=r, kind=kind, steps=risers))
     return out
+
+
+def _ring_of(room: Room) -> list[Point]:
+    """The floor corners, in shot order, on the room's own level.
+
+    Two things a stairwell breaks that a flat room never does.
+
+    The floor is where most of the floor shots are, not simply the lowest
+    reading: stand in a top-floor corridor and the lowest thing the instrument
+    sees is the landing one storey down. Taking that as the datum drags the
+    landing's corners into the ring and fits the floor plane through two levels
+    at once.
+
+    And a corner shot twice is one corner. Where a flight arrives at a wall the
+    last tread and the wall corner are the same place, read a few millimetres
+    apart, and the stub between them doubles the ring back on itself - which
+    reads as a self-intersection and blocks the build.
+    """
+    floor_pts = sorted((p for p in room.points if p.role is Role.FLOOR),
+                       key=lambda p: p.index)
+    if not floor_pts:
+        return []
+
+    bands: list[list[Point]] = []
+    for p in sorted(floor_pts, key=lambda q: q.z):
+        if bands and p.z - bands[-1][-1].z <= Z_BAND_TOL:
+            bands[-1].append(p)
+        else:
+            bands.append([p])
+    on_level = {p.name for p in max(bands, key=len)}
+
+    ring: list[Point] = []
+    for p in floor_pts:
+        if p.name not in on_level:
+            continue
+        if ring and _dist2d(ring[-1], p) <= CORNER_MERGE:
+            continue
+        ring.append(p)
+    while len(ring) > 2 and _dist2d(ring[0], ring[-1]) <= CORNER_MERGE:
+        ring.pop()
+    return ring
 
 
 def _validate(room: Room) -> None:
@@ -630,8 +685,7 @@ def rebuild(room: Room) -> None:
     room.pervaz = []
     _detect_pervaz(room)
 
-    room.outline = sorted(
-        (p for p in room.points if p.role is Role.FLOOR), key=lambda p: p.index)
+    room.outline = _ring_of(room)
     room.ceiling = sorted(
         (p for p in room.points if p.role is Role.CEILING), key=lambda p: p.index)
     room.controls = [p for p in room.points if p.role is Role.CONTROL]
