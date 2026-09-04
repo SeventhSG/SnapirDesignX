@@ -118,6 +118,11 @@ public class MainActivity extends Activity {
             web.setVisibility(View.VISIBLE);
             web.loadUrl(NativeService.ORIGIN + "/");
         });
+
+        // Only once the app is up and usable. An update prompt on top of a
+        // splash screen, before the operator can even see their rooms, is a
+        // dialog in the way rather than a service.
+        checkForUpdate(false);
     }
 
     /**
@@ -234,6 +239,28 @@ public class MainActivity extends Activity {
                 : "window.__snapirSdxpChosen && window.__snapirSdxpChosen("
                         + jsString(path) + ")";
         runOnUiThread(() -> web.evaluateJavascript(js, null));
+    }
+
+    /**
+     * Look for a newer release. Silent when there is nothing to report unless
+     * the operator asked, in which case saying "you are up to date" is the
+     * whole answer they wanted.
+     */
+    void checkForUpdate(boolean announceWhenCurrent) {
+        new Thread(() -> {
+            String running = "0";
+            try {
+                running = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            } catch (PackageManager.NameNotFoundException ignored) {
+                // Cannot happen for our own package, and if it somehow does the
+                // comparison below simply finds everything newer.
+            }
+            final Updater.Release release = Updater.check(running);
+            runOnUiThread(() -> {
+                if (release != null) Updater.offer(this, release);
+                else if (announceWhenCurrent) toast("Snapir is up to date.");
+            });
+        }).start();
     }
 
     void toast(String text) {

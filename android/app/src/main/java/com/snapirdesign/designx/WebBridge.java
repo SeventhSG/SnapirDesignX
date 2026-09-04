@@ -33,6 +33,12 @@ public class WebBridge {
         activity.toast("Saved to\n" + path);
     }
 
+    /** Check for a new version on demand, and say so either way. */
+    @JavascriptInterface
+    public void checkForUpdate() {
+        activity.checkForUpdate(true);
+    }
+
     @JavascriptInterface
     public void setTheme(boolean dark) {
         // The page paints itself; the shell has nothing of its own to re-colour.
