@@ -135,3 +135,29 @@ def test_removed_wall_opens_the_shell():
     opened = solid_stats(build_room(room, cfg, removed_walls=[gone]))
 
     assert opened["volume_m3"] < plain["volume_m3"]
+
+
+def test_a_zigzag_builds_the_wall_it_measured_not_a_flight():
+    # A zigzag is the corner where each tread meets the wall: the surveyor puts
+    # the tip against the wall and walks up, so that line measured the wall. A
+    # 90 cm flight hung on it is a staircase nobody surveyed, half of it inside
+    # the masonry and half of it in mid air.
+    from dataclasses import replace
+
+    from snapir.settings import BuildSettings
+    from snapir.solid import build_room, solid_stats
+
+    room = read_room(FIXTURE)
+    room.stairs = [_stair_in(room)]
+    room.stairs[0].kind = "zigzag"
+
+    cfg = BuildSettings()
+    wall = solid_stats(build_room(room, cfg))["volume_m3"]
+    wide = solid_stats(build_room(room, replace(cfg, stair_width=3000.0)))["volume_m3"]
+    # The flight's width is not what a zigzag is built to, so turning it up
+    # changes nothing at all.
+    assert wall == pytest.approx(wide, abs=1e-9)
+
+    # It is built to the wall's thickness instead, so that does change it.
+    thick = solid_stats(build_room(room, replace(cfg, wall_thickness=400.0)))
+    assert thick["volume_m3"] > wall

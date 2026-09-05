@@ -1,11 +1,13 @@
 #include "snapir/solid.hpp"
 
 #include "snapir/elements.hpp"
+#include "snapir/parser.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <fstream>
 #include <sstream>
 
@@ -453,10 +455,18 @@ TopoDS_Shape fitting_body(const Opening& op, const std::vector<Pt>& ring,
 // from. This is the stair as built mass, not the void beneath it.
 std::vector<TopoDS_Shape> stairs_bodies(const Room& room, const BuildSettings& cfg,
                                         const Plane& floor) {
-  const double width = cm(cfg.stair_width);
+  // How the flight was traced says what was measured, and that decides what
+  // gets built. A nosing line runs along the middle of the treads: the flight
+  // itself was measured, so the flight is built, as wide as the settings say.
+  // A zigzag is the corner where each tread meets the wall - the surveyor puts
+  // the tip against the wall and walks up - so what that line measured is the
+  // wall, and a wall is what gets built: the stepped profile, one wall thick.
+  const double wall = cm(room.wall_thickness ? *room.wall_thickness
+                                             : cfg.wall_thickness);
   std::vector<TopoDS_Shape> bodies;
   for (const auto& stair : room.stairs) {
     const auto& pts = stair.points;
+    const double width = stair.kind == "zigzag" ? wall : cm(cfg.stair_width);
     double lowest = pts.front().z;
     for (const auto& p : pts) lowest = std::min(lowest, p.z);
     for (size_t i = 0; i + 1 < pts.size(); ++i) {
@@ -741,6 +751,36 @@ std::vector<Pt> offset_ring(const std::vector<Pt>& raw_ring, double distance) {
   return grown;
 }
 
+std::set<int> open_corners(const Room& room) {
+  std::set<int> out;
+  if (!room.ceiling_z || room.outline.empty()) return out;
+
+  std::vector<const Point*> high;
+  for (const auto& p : room.points)
+    if (std::abs(p.z - *room.ceiling_z) <= kCeilingTol) high.push_back(&p);
+  if (high.empty()) return out;
+
+  for (size_t i = 0; i < room.outline.size(); ++i) {
+    const Point& p = room.outline[i];
+    double closest = std::numeric_limits<double>::infinity();
+    for (const Point* q : high)
+      closest = std::min(closest, std::sqrt((p.x - q->x) * (p.x - q->x) +
+                                            (p.y - q->y) * (p.y - q->y)));
+    if (closest > kOpenReach) out.insert(static_cast<int>(i));
+  }
+  return out;
+}
+
+std::set<int> open_edges(const Room& room) {
+  const std::set<int> corners = open_corners(room);
+  std::set<int> out;
+  if (corners.empty()) return out;
+  const int n = static_cast<int>(room.outline.size());
+  for (int i = 0; i < n; ++i)
+    if (corners.count(i) && corners.count((i + 1) % n)) out.insert(i);
+  return out;
+}
+
 std::pair<Plane, Plane> room_planes(const Room& room, const BuildSettings& cfg) {
   std::vector<Pt3> floor_pts;
   for (const auto& p : room.outline) floor_pts.push_back({p.x, p.y, p.z});
@@ -820,9 +860,21 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
 
   const Plane outer_floor{floor.px, floor.py, floor.pz - cm(cfg.floor_thickness),
                           floor.nx, floor.ny, floor.nz};
-  const Plane outer_ceiling{ceiling.px, ceiling.py,
-                            ceiling.pz + cm(cfg.ceiling_thickness), ceiling.nx,
-                            ceiling.ny, ceiling.nz};
+  // Not every building is closed. A stairwell is open at the top and a landing
+  // has no ceiling of its own, and the survey says so by having nothing shot up
+  // there. Under three corners with anything above them, there is no ceiling to
+  // build: the walls stop where the room does and the sky is left where the sky
+  // is.
+  const std::set<int> opens = open_edges(room);
+  const bool roofless =
+      static_cast<int>(room.outline.size()) -
+          static_cast<int>(open_corners(room).size()) < 3;
+
+  const Plane outer_ceiling =
+      roofless ? ceiling
+               : Plane{ceiling.px, ceiling.py,
+                       ceiling.pz + cm(cfg.ceiling_thickness), ceiling.nx,
+                       ceiling.ny, ceiling.nz};
 
   const TopoDS_Shape outer = prism(outer_ring, outer_floor, outer_ceiling);
   const TopoDS_Shape inner = prism(inner_ring, floor, ceiling);
@@ -852,6 +904,20 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
                          std::to_string(*edge + 1));
       shape = c.Shape();
     }
+  }
+
+  // A wall needs a ceiling over it. Where neither end of an edge has anything
+  // shot above it, the building has an opening there rather than a wall, and
+  // putting one in is inventing the very thing the survey went to the trouble
+  // of not measuring.
+  for (int i : opens) {
+    BRepAlgoAPI_Cut c(shape,
+                      removed_wall_opening(inner_ring, floor, ceiling, i, cfg));
+    c.Build();
+    if (!c.IsDone())
+      throw BuildError(room.name + ": could not open side " +
+                       std::to_string(i + 1));
+    shape = c.Shape();
   }
 
   const std::vector<Opening>& rects = openings ? *openings : room.openings;

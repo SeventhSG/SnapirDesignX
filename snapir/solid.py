@@ -16,7 +16,8 @@ from pathlib import Path
 
 from shapely.geometry import Polygon
 
-from .geometry import ensure_ccw, project_onto_edges, self_intersections
+from .geometry import (ensure_ccw, point_in_polygon, project_onto_edges,
+                       self_intersections)
 from .model import Jamb, Opening, Room
 from .planes import Plane, fit_or_level, level_plane
 from .settings import BuildSettings
@@ -78,6 +79,50 @@ def _planar_face(pts, occ):
     if not face.IsDone():
         raise BuildError("face is not planar")
     return face.Face()
+
+
+# A corner has a ceiling over it when something was shot at ceiling level this
+# close to it in plan. Across five surveys and forty-five rooms the worst a real
+# room manages is 105 cm; the only corners that miss are the ones over a
+# stairwell, at 179 cm and beyond. There is no third case in the data.
+OPEN_REACH = 120.0       # cm
+
+
+def open_corners(room: Room) -> set[int]:
+    """Which corners of the ring have nothing above them.
+
+    Not every building is closed. A stairwell is open at the top, a landing has
+    no ceiling of its own, and a survey says so by having nothing shot up there
+    - which is a measurement, not a gap. Reading it as a gap is what puts a wall
+    and a slab across an opening the building does not have.
+    """
+    from .parser import CEILING_TOL
+
+    if room.ceiling_z is None or not room.outline:
+        return set()
+    high = [p for p in room.points if abs(p.z - room.ceiling_z) <= CEILING_TOL]
+    if not high:
+        return set()
+    out = set()
+    for i, p in enumerate(room.outline):
+        near = min(((p.x - q.x) ** 2 + (p.y - q.y) ** 2) ** 0.5 for q in high)
+        if near > OPEN_REACH:
+            out.add(i)
+    return out
+
+
+def open_edges(room: Room) -> set[int]:
+    """Ring edges with no ceiling over either end: an opening, not a wall.
+
+    One end is enough to keep a wall. A wall that reaches an open corner is
+    still a wall for as long as there is a ceiling on it, and stopping it at
+    the corner is what makes the room end where the building does.
+    """
+    corners = open_corners(room)
+    if not corners:
+        return set()
+    n = len(room.outline)
+    return {i for i in range(n) if i in corners and (i + 1) % n in corners}
 
 
 def room_planes(room: Room, cfg: BuildSettings) -> tuple[Plane, Plane]:
@@ -289,10 +334,19 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
                  else cfg.wall_thickness)
     outer_ring = _offset_ring(inner_ring, thickness)
 
+    # Not every building is closed. A stairwell is open at the top and a landing
+    # has no ceiling of its own, and the survey says so by having nothing shot
+    # up there. Under three corners with anything above them, there is no
+    # ceiling to build: the walls stop where the room does and the sky is left
+    # where the sky is.
+    opens = open_edges(room)
+    roofless = len(room.outline) - len(open_corners(room)) < 3
+
     outer_floor = Plane(floor.px, floor.py, floor.pz - cm(cfg.floor_thickness),
                         floor.nx, floor.ny, floor.nz)
-    outer_ceiling = Plane(ceiling.px, ceiling.py, ceiling.pz + cm(cfg.ceiling_thickness),
-                          ceiling.nx, ceiling.ny, ceiling.nz)
+    outer_ceiling = ceiling if roofless else Plane(
+        ceiling.px, ceiling.py, ceiling.pz + cm(cfg.ceiling_thickness),
+        ceiling.nx, ceiling.ny, ceiling.nz)
 
     outer = _prism(outer_ring, outer_floor, outer_ceiling, occ)
     inner = _prism(inner_ring, floor, ceiling, occ)
@@ -318,6 +372,18 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
         c.Build()
         if not c.IsDone():
             raise BuildError(f"{room.name}: could not remove wall {i + 1}")
+        shape = c.Shape()
+
+    # A wall needs a ceiling over it. Where neither end of an edge has anything
+    # shot above it, the building has an opening there rather than a wall, and
+    # putting one in is inventing the very thing the survey went to the trouble
+    # of not measuring.
+    for i in sorted(opens):
+        c = occ["Cut"](shape, _removed_wall_opening(inner_ring, floor, ceiling, i,
+                                                    cfg, occ))
+        c.Build()
+        if not c.IsDone():
+            raise BuildError(f"{room.name}: could not open side {i + 1}")
         shape = c.Shape()
 
     rects = list(openings if openings is not None else room.openings)
@@ -539,15 +605,26 @@ def _fitting_body(op: Opening, ring, cfg: BuildSettings, occ):
 def _stairs_bodies(room: Room, cfg: BuildSettings, floor: Plane, occ) -> list:
     """One box per step, stacked from the floor up to that step's height.
 
-    Only the nosing line is shot, so each box is centred on the line and
-    given the settings' flight width - there is nothing else in the survey to
-    derive it from. This is the stair as built mass, not the void beneath it.
+    How the flight was traced says what was measured, and that decides what gets
+    built.
+
+    A nosing line runs along the middle of the treads: the flight itself was
+    measured, so the flight is built, as wide as the settings say because its
+    width is the one thing the line cannot give.
+
+    A zigzag is the corner where each tread meets the wall. The surveyor puts
+    the tip against the wall and walks up, so what that line measured is the
+    wall - and a wall is what gets built: the stepped profile, one wall thick.
+    Ninety centimetres of invented flight hung on it is a staircase nobody
+    surveyed, half of it inside the masonry and half of it in mid air.
     """
-    width = cm(cfg.stair_width)
     bodies = []
+    thickness = cm(room.wall_thickness if room.wall_thickness is not None
+                   else cfg.wall_thickness)
     for stair in room.stairs:
         pts = stair.points
         lowest = min(p.z for p in pts)
+        width = thickness if stair.kind == "zigzag" else cm(cfg.stair_width)
         for i in range(len(pts) - 1):
             a, b = pts[i], pts[i + 1]
             dx, dy = b.x - a.x, b.y - a.y

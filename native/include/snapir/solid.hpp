@@ -10,6 +10,7 @@
 // the body is watertight because the kernel refuses to build it otherwise.
 #pragma once
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -56,6 +57,24 @@ struct SolidStats {
   int faces = 0;
   double volume_m3 = 0;
 };
+
+// A corner has a ceiling over it when something was shot at ceiling level this
+// close to it in plan. Across five surveys and forty-five rooms the worst a
+// real room manages is 105 cm; the only corners that miss are the ones over a
+// stairwell, at 179 cm and beyond. There is no third case in the data.
+inline constexpr double kOpenReach = 120.0;   // cm
+
+// Which corners of the ring have nothing above them.
+//
+// Not every building is closed. A stairwell is open at the top, a landing has
+// no ceiling of its own, and a survey says so by having nothing shot up there -
+// which is a measurement, not a gap. Reading it as a gap is what puts a wall
+// and a slab across an opening the building does not have.
+std::set<int> open_corners(const Room& room);
+
+// Ring edges with no ceiling over either end: an opening, not a wall. One end
+// is enough to keep a wall.
+std::set<int> open_edges(const Room& room);
 
 // The floor and ceiling planes this room will be built between.
 std::pair<Plane, Plane> room_planes(const Room& room, const BuildSettings& cfg);
