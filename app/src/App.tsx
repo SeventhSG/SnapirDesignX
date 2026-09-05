@@ -1214,8 +1214,7 @@ export default function App() {
 
         {screen === "merge" && project && (
           <Merge projectId={project.id} projectName={project.name} lang={lang}
-                 onClose={() => setScreen(grouped ? "rooms" : "rooms")}
-                 onSay={say} />
+                 dark={dark} onClose={() => setScreen("rooms")} onSay={say} />
         )}
 
         {/* ---------------- flats ---------------- */}

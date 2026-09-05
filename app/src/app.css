@@ -766,13 +766,10 @@ button{font-family:inherit}
 .mergehint{margin:0;padding:8px 16px;font-size:12px;color:var(--ink-2);
   border-bottom:1px solid var(--line);background:var(--sunk)}
 .mergebody{flex:1;display:flex;min-height:0}
-.mergeplan{flex:1;min-width:0;background:var(--vp-a);touch-action:none;
-  cursor:grab}
+.mergeplan{flex:1;min-width:0;position:relative;background:var(--vp-a);
+  touch-action:none;cursor:grab;overflow:hidden}
 .mergeplan:active{cursor:grabbing}
-.mdot{cursor:pointer}
-.mdot:hover{stroke:#C99B3F;stroke-width:2}
-.mline{cursor:pointer;stroke-linecap:round}
-.mline:hover{stroke:#C99B3F;stroke-opacity:1}
+.mergeplan canvas{display:block;width:100%;height:100%}
 .mergeside{width:300px;flex:0 0 300px;border-left:1px solid var(--line);
   padding:12px 14px calc(16px + var(--sa-b));overflow:auto;background:var(--panel)}
 .mergeside h4{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
