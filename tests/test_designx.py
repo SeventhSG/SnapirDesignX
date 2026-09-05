@@ -18,6 +18,7 @@ from snapir.model import Role
 from snapir.parser import read_room
 
 CORNERS = [(0, 0), (400, 0), (400, 300), (0, 300)]
+NL = chr(10)
 CEIL = 260.0
 
 
@@ -172,9 +173,72 @@ def test_a_corner_the_outline_already_draws_is_not_sent_twice():
     # Only what no curve carries. A ring corner is on the ring; sending it as a
     # loose point as well would put a cross through every corner of the room.
     from snapir.designx import _rings
+    from snapir.settings import BuildSettings
 
     room = _room()
-    _polylines, loose = _rings(room)
+    _polylines, loose, _circles = _rings(room, BuildSettings())
     for p in room.outline:
         assert not any(abs(q[0] - p.x) < 0.01 and abs(q[1] - p.y) < 0.01
                        and abs(q[2] - p.z) < 0.01 for q in loose)
+
+
+def _room_with_services():
+    """A room with a socket and a water pipe on the same wall."""
+    rows, n = ["Kimlik;X (cm);Y (cm);Z (cm);Katman"], 1
+
+    def add(x, y, z, layer):
+        nonlocal n
+        rows.append(f"P_{n:03d};{x:.2f};{y:.2f};{z:.2f};{layer}")
+        n += 1
+
+    for x, y in CORNERS:
+        add(x, y, 0.0, "Zemin")
+    for x, y in CORNERS:
+        add(x, y, CEIL, "")
+    add(120.0, 2.0, 30.0, "Kontak")
+    add(200.0, 3.0, 60.0, "Su tesisat")
+
+    p = Path(tempfile.mkdtemp()) / "Services.csv"
+    p.write_text(NL.join(rows) + NL, encoding="utf-8")
+    return read_room(p)
+
+
+def test_a_socket_leaves_as_a_square_and_a_pipe_as_a_circle():
+    # Both arrive as one reading, and as one reading they left as two identical
+    # dots - which says where a service is and nothing about what it is.
+    from snapir.designx import _rings
+    from snapir.settings import BuildSettings
+
+    cfg = BuildSettings()
+    room = _room_with_services()
+    assert [p.role for p in room.points if p.role is Role.SOCKET]
+    assert [p.role for p in room.points if p.role is Role.PLUMBING]
+
+    rings, _loose, circles = _rings(room, cfg)
+    assert len(circles) == 1
+    (_c, _axis, radius) = circles[0]
+    assert radius == pytest.approx(cfg.pipe_diameter / 10.0 / 2)
+
+    # The square sits on the wall, at the socket's own height, the size the
+    # settings give a faceplate.
+    side = cfg.socket_width / 10.0
+    squares = [r for r in rings
+               if len(r) == 5 and all(abs(q[1]) < 1.0 for q in r)
+               and abs(max(q[2] for q in r) - min(q[2] for q in r)
+                       - cfg.socket_height / 10.0) < 0.01]
+    assert squares, "no faceplate drawn"
+    q = squares[0]
+    assert abs(max(v[0] for v in q) - min(v[0] for v in q) - side) < 0.01
+
+
+def test_a_service_is_not_marked_twice():
+    # It has a shape of its own now, so the cross through it is one mark more
+    # than the drawing needs.
+    from snapir.designx import MARK, _rings
+    from snapir.settings import BuildSettings
+
+    room = _room_with_services()
+    rings, _loose, _circles = _rings(room, BuildSettings())
+    arms = [r for r in rings
+            if len(r) == 2 and abs(r[0][2] - r[1][2]) == pytest.approx(2 * MARK)]
+    assert not arms, "a service was crossed as well as drawn"

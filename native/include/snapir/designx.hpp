@@ -9,12 +9,14 @@
 #pragma once
 #include <string>
 #include "snapir/model.hpp"
+#include "snapir/settings.hpp"
 
 namespace snapir {
 
 // Write the room outline, ceiling ring and openings as exact curves.
 // fmt is "iges", "step" or "asc".
 std::string export_curves(const Room& room, const std::string& out_dir,
-                          const std::string& fmt = "iges");
+                          const std::string& fmt = "iges",
+                          const BuildSettings& cfg = BuildSettings());
 
 }  // namespace snapir

@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
@@ -20,9 +21,14 @@
 #include <Interface_Static.hxx>
 #include <STEPControl_Writer.hxx>
 #include <TopoDS_Compound.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 
+#include "snapir/geometry.hpp"
 #include "snapir/planes.hpp"
+#include "snapir/settings.hpp"
 #include "snapir/solid.hpp"
 
 namespace fs = std::filesystem;
@@ -118,6 +124,57 @@ void depth_box(const Opening& op, const std::vector<Pt>& ring,
   }
 }
 
+// Sockets and pipes as the shapes they are, drawn on their own wall.
+//
+// Both arrive as a single reading, and as a single reading they leave as two
+// identical dots - which tells you where a service is and nothing about what it
+// is. A socket is a faceplate and a pipe is a bore, so one goes over as the
+// square it measures and the other as a real circle, seated on the wall face
+// the way the body seats them.
+struct Circle {
+  std::array<double, 3> centre;
+  Pt axis;
+  double radius;
+};
+
+void fixtures_of(const Room& room, const BuildSettings& cfg,
+                 const std::vector<Pt>& ring, std::vector<Ring>& squares,
+                 std::vector<Circle>& circles) {
+  if (!cfg.include_fixtures || ring.size() < 3) return;
+
+  for (const auto& p : room.points) {
+    if (p.role != Role::Socket && p.role != Role::Plumbing) continue;
+    const Projection pr = project_onto_edges({p.x, p.y}, ring);
+    const Pt& a = ring[pr.edge];
+    const Pt& b = ring[(pr.edge + 1) % ring.size()];
+    double ex = b.x - a.x, ey = b.y - a.y;
+    double len = std::sqrt(ex * ex + ey * ey);
+    if (len == 0.0) len = 1.0;
+    const double tx = ex / len, ty = ey / len;
+    double nx = -ey / len, ny = ex / len;
+    if (!point_in_polygon({pr.point.x + nx * 0.5, pr.point.y + ny * 0.5}, ring)) {
+      nx = -nx;
+      ny = -ny;
+    }
+
+    if (p.role == Role::Plumbing) {
+      circles.push_back({{pr.point.x, pr.point.y, p.z}, {nx, ny},
+                         cm(cfg.pipe_diameter) / 2});
+      continue;
+    }
+    const double hw = cm(cfg.socket_width) / 2, hh = cm(cfg.socket_height) / 2;
+    const std::array<std::array<double, 3>, 4> face = {{
+        {pr.point.x + tx * hw, pr.point.y + ty * hw, p.z - hh},
+        {pr.point.x - tx * hw, pr.point.y - ty * hw, p.z - hh},
+        {pr.point.x - tx * hw, pr.point.y - ty * hw, p.z + hh},
+        {pr.point.x + tx * hw, pr.point.y + ty * hw, p.z + hh},
+    }};
+    Ring loop(face.begin(), face.end());
+    loop.push_back(face[0]);
+    squares.push_back(loop);
+  }
+}
+
 // Every polyline worth handing over, and every shot none of them carries.
 //
 // The two come back together because the second is worked out from the first:
@@ -125,9 +182,10 @@ void depth_box(const Opening& op, const std::vector<Pt>& ring,
 struct Handover {
   std::vector<Ring> rings;
   std::vector<std::array<double, 3>> loose;
+  std::vector<Circle> circles;
 };
 
-Handover rings_of(const Room& room) {
+Handover rings_of(const Room& room, const BuildSettings& cfg) {
   std::vector<Ring> rings;
 
   Ring ring;
@@ -188,22 +246,35 @@ Handover rings_of(const Room& room) {
   // A single shot is written as an IGES point as well, which is the exact
   // thing. The cross is for STEP, whose writer drops a loose vertex on the
   // floor: three short lines through the shot, so it arrives either way.
+  std::vector<Ring> squares;
+  std::vector<Circle> circles;
+  fixtures_of(room, cfg, plan, squares, circles);
+  for (const auto& s : squares) rings.push_back(s);
+
   const auto loose = vertices_of(room, rings);
+  // A service already has a shape of its own, so it gets no cross: two marks
+  // on one reading is one more than the drawing needs.
+  std::set<std::array<long long, 3>> marked;
+  for (const auto& p : room.points)
+    if (p.role == Role::Socket || p.role == Role::Plumbing)
+      marked.insert(key_of(p.x, p.y, p.z));
+
   for (const auto& v : loose) {
+    if (marked.count(key_of(v[0], v[1], v[2]))) continue;
     rings.push_back({{v[0] - kMark, v[1], v[2]}, {v[0] + kMark, v[1], v[2]}});
     rings.push_back({{v[0], v[1] - kMark, v[2]}, {v[0], v[1] + kMark, v[2]}});
     rings.push_back({{v[0], v[1], v[2] - kMark}, {v[0], v[1], v[2] + kMark}});
   }
-  return {rings, loose};
+  return {rings, loose, circles};
 }
 
 std::string write_curves(const Room& room, const fs::path& path,
-                         const std::string& fmt) {
+                         const std::string& fmt, const BuildSettings& cfg) {
   BRep_Builder builder;
   TopoDS_Compound compound;
   builder.MakeCompound(compound);
 
-  const Handover handover = rings_of(room);
+  const Handover handover = rings_of(room, cfg);
   for (const auto& ring : handover.rings) {
     if (ring.size() < 2) continue;
     BRepBuilderAPI_MakePolygon poly;
@@ -213,6 +284,16 @@ std::string write_curves(const Room& room, const fs::path& path,
     // loop. Closing it would draw a wall that was never measured.
     if (ring.size() > 2 && !(ring.front() == ring.back())) poly.Close();
     builder.Add(compound, poly.Wire());
+  }
+
+  // A real circle, not a polygon pretending to be one: Design X reads the arc
+  // and gives back a diameter you can dimension off.
+  for (const auto& c : handover.circles) {
+    const gp_Ax2 axis(
+        gp_Pnt(c.centre[0] * kCmToMm, c.centre[1] * kCmToMm, c.centre[2] * kCmToMm),
+        gp_Dir(c.axis.x, c.axis.y, 0.0));
+    builder.Add(compound,
+                BRepBuilderAPI_MakeEdge(gp_Circ(axis, c.radius * kCmToMm)).Edge());
   }
 
   // Single shots, as points. Design X shows a vertex where the instrument
@@ -258,7 +339,7 @@ std::string write_asc(const Room& room, const fs::path& path) {
 }  // namespace
 
 std::string export_curves(const Room& room, const std::string& out_dir,
-                          const std::string& fmt_in) {
+                          const std::string& fmt_in, const BuildSettings& cfg) {
   std::string fmt;
   for (char c : fmt_in) fmt += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   const auto it = suffixes().find(fmt);
@@ -271,7 +352,7 @@ std::string export_curves(const Room& room, const std::string& out_dir,
   if (fmt == "asc") return write_asc(room, path);
   if (room.outline.size() < 3)
     throw BuildError(room.name + ": outline has fewer than three points");
-  return write_curves(room, path, fmt);
+  return write_curves(room, path, fmt, cfg);
 }
 
 }  // namespace snapir

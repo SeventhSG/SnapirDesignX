@@ -27,7 +27,7 @@ from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.3.16")
+app = FastAPI(title="Snapir Design X", version="1.3.17")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -613,7 +613,7 @@ def export_designx(pid: str, name: str, fmt: str = "iges"):
     room = _room(pid, name)
     out = Path(proj.folder) / "For Design X"
     try:
-        path = _quiet(export_curves, room, out, fmt)
+        path = _quiet(export_curves, room, out, fmt, _settings(pid))
     except BuildError as e:
         raise HTTPException(422, str(e))
     return {"path": str(path), "bytes": Path(path).stat().st_size}

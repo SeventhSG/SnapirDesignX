@@ -12,7 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from .model import Role, Room
-from .solid import CM_TO_MM, BuildError
+from .settings import BuildSettings
+from .solid import CM_TO_MM, BuildError, cm
 
 _SUFFIX = {"iges": ".igs", "step": ".stp", "asc": ".asc"}
 
@@ -20,8 +21,10 @@ _SUFFIX = {"iges": ".igs", "step": ".stp", "asc": ".asc"}
 MARK = 5.0
 
 
-def export_curves(room: Room, out_dir: str | Path, fmt: str = "iges") -> Path:
+def export_curves(room: Room, out_dir: str | Path, fmt: str = "iges",
+                  cfg: BuildSettings | None = None) -> Path:
     """Write the room outline, ceiling ring and openings as exact curves."""
+    cfg = cfg or BuildSettings()
     fmt = fmt.lower()
     if fmt not in _SUFFIX:
         raise BuildError(f"Unknown format: {fmt}")
@@ -34,14 +37,49 @@ def export_curves(room: Room, out_dir: str | Path, fmt: str = "iges") -> Path:
         return _write_asc(room, path)
     if len(room.outline) < 3:
         raise BuildError(f"{room.name}: outline has fewer than three points")
-    return _write_curves(room, path, fmt)
+    return _write_curves(room, path, fmt, cfg)
 
 
-def _rings(room: Room):
+def _fixtures(room: Room, cfg: BuildSettings, ring):
+    """Sockets and pipes as the shapes they are, drawn on their own wall.
+
+    Both arrive as a single reading, and as a single reading they leave as two
+    identical dots - which tells you where a service is and nothing about what
+    it is. A socket is a faceplate and a pipe is a bore, so one goes over as
+    the square it measures and the other as a real circle, seated on the wall
+    face the way the body seats them.
+    """
+    from .solid import _wall_frame
+
+    squares: list[list[tuple[float, float, float]]] = []
+    circles: list[tuple[tuple[float, float, float], tuple[float, float], float]] = []
+    if not cfg.include_fixtures or len(ring) < 3:
+        return squares, circles
+
+    for p in room.points:
+        if p.role not in (Role.SOCKET, Role.PLUMBING):
+            continue
+        try:
+            (sx, sy), (nx, ny), (tx, ty), _d = _wall_frame(p.x, p.y, list(ring))
+        except Exception:
+            continue
+        if p.role is Role.PLUMBING:
+            circles.append(((sx, sy, p.z), (nx, ny), cm(cfg.pipe_diameter) / 2))
+            continue
+        hw, hh = cm(cfg.socket_width) / 2, cm(cfg.socket_height) / 2
+        face = [(sx + tx * hw, sy + ty * hw, p.z - hh),
+                (sx - tx * hw, sy - ty * hw, p.z - hh),
+                (sx - tx * hw, sy - ty * hw, p.z + hh),
+                (sx + tx * hw, sy + ty * hw, p.z + hh)]
+        squares.append(face + [face[0]])
+    return squares, circles
+
+
+def _rings(room: Room, cfg: BuildSettings):
     """Every polyline worth handing over, and every shot none of them carries.
 
-    Returns the two together because the second is worked out from the first:
-    a shot is loose exactly when no curve already passes through it.
+    Returns them together because the second is worked out from the first: a
+    shot is loose exactly when no curve already passes through it.
     """
     from .planes import fit_or_level, level_plane
 
@@ -80,15 +118,25 @@ def _rings(room: Room):
         rings.append([(v.corner.x, v.corner.y, v.corner.z),
                       (v.wall.x, v.wall.y, v.wall.z)])
 
+    squares, circles = _fixtures(room, cfg, [(x, y) for x, y, _z in ring])
+    rings.extend(squares)
+
     # A single shot is written as an IGES point as well, which is the exact
     # thing. The cross is for STEP, whose writer drops a loose vertex on the
     # floor: three short lines through the shot, so it arrives either way.
+    #
+    # A service already has a shape of its own, so it gets no cross: two marks
+    # on one reading is one more than the drawing needs.
     loose = _vertices(room, rings)
+    marked = {(round(p.x, 3), round(p.y, 3), round(p.z, 3)) for p in room.points
+              if p.role in (Role.SOCKET, Role.PLUMBING)}
     for x, y, z in loose:
+        if (round(x, 3), round(y, 3), round(z, 3)) in marked:
+            continue
         rings.append([(x - MARK, y, z), (x + MARK, y, z)])
         rings.append([(x, y - MARK, z), (x, y + MARK, z)])
         rings.append([(x, y, z - MARK), (x, y, z + MARK)])
-    return rings, loose
+    return rings, loose, circles
 
 
 def _depth_box(op, ring) -> list[list[tuple[float, float, float]]]:
@@ -147,7 +195,7 @@ def _vertices(room: Room, carried) -> list[tuple[float, float, float]]:
     return loose + [(s.x, s.y, s.z) for s in room.stations]
 
 
-def _write_curves(room: Room, path: Path, fmt: str) -> Path:
+def _write_curves(room: Room, path: Path, fmt: str, cfg: BuildSettings) -> Path:
     from OCP.BRep import BRep_Builder
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeVertex
     from OCP.gp import gp_Pnt
@@ -157,7 +205,7 @@ def _write_curves(room: Room, path: Path, fmt: str) -> Path:
     compound = TopoDS_Compound()
     builder.MakeCompound(compound)
 
-    rings, loose = _rings(room)
+    rings, loose, circles = _rings(room, cfg)
     for ring in rings:
         if len(ring) < 2:
             continue
@@ -169,6 +217,17 @@ def _write_curves(room: Room, path: Path, fmt: str) -> Path:
         if len(ring) > 2 and ring[0] != ring[-1]:
             poly.Close()
         builder.Add(compound, poly.Wire())
+
+    # A real circle, not a polygon pretending to be one: Design X reads the
+    # arc and gives back a diameter you can dimension off.
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
+    from OCP.gp import gp_Ax2, gp_Circ, gp_Dir
+
+    for (cx, cy, cz), (nx, ny), radius in circles:
+        axis = gp_Ax2(gp_Pnt(cx * CM_TO_MM, cy * CM_TO_MM, cz * CM_TO_MM),
+                      gp_Dir(nx, ny, 0.0))
+        builder.Add(compound,
+                    BRepBuilderAPI_MakeEdge(gp_Circ(axis, radius * CM_TO_MM)).Edge())
 
     # Single shots, as points. Design X shows a vertex where the instrument
     # stood; a wire cannot carry one.

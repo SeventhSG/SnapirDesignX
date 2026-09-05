@@ -50,7 +50,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.16";
+constexpr const char* kVersion = "1.3.17";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -1305,7 +1305,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const ProjectRecord& proj = store.get(pid);
                const Room room = room_or_throw(pid, name);
                const fs::path out = fs::u8path(proj.folder) / "For Design X";
-               const std::string path = export_curves(room, out.u8string(), fmt);
+               const std::string path =
+                   export_curves(room, out.u8string(), fmt, settings_for(pid));
                ok_json(res, Json{{"path", path},
                                  {"bytes", file_size_of(path)},
                                  {"format", fmt}});
