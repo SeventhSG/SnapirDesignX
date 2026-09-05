@@ -167,3 +167,51 @@ def test_a_jamb_near_a_corner_with_nothing_beyond_it_is_still_a_jamb():
     assert len(room.openings) == 1
     op = room.openings[0]
     assert op.width == pytest.approx(100.0, abs=1.0)
+
+
+def _room_with_door(sill: float):
+    """A room whose doorway was shot with its bottom a little off the floor."""
+    rows, n = ["Kimlik;X (cm);Y (cm);Z (cm);Katman"], 1
+
+    def add(x, y, z, layer):
+        nonlocal n
+        rows.append(f"P_{n:03d};{x:.2f};{y:.2f};{z:.2f};{layer}")
+        n += 1
+
+    for x, y in CORNERS:
+        add(x, y, 0.0, "Zemin")
+    for x, y in CORNERS:
+        add(x, y, CEIL, "")
+    for x in (150.0, 240.0):
+        add(x, 0.0, sill, "Katman 0")
+        add(x, 0.0, 210.0, "Katman 0")
+
+    p = Path(tempfile.mkdtemp()) / "Door.csv"
+    p.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return read_room(p)
+
+
+def test_a_doorway_is_cut_to_the_floor_not_to_its_sill():
+    # The bottom of a doorway is not measured: the surveyor shoots the jamb
+    # where the frame is. A shot 13 cm up left 13 cm of wall standing under the
+    # door - a threshold slab across the opening that the building has not got.
+    room = _room_with_door(13.0)
+    assert room.openings[0].kind == "door"
+    cfg = BuildSettings()
+    thick = cfg.wall_thickness / 10.0
+    shape = build_room(room, cfg)
+
+    for z in (1.0, 6.0, 12.0, 100.0):
+        assert not _inside(shape, 195.0, -thick / 2, z), f"threshold left at z={z}"
+    # The floor slab under it is untouched.
+    assert _inside(shape, 195.0, -thick / 2, -thick / 2)
+
+
+def test_a_window_keeps_the_sill_it_was_shot_with():
+    # A window sill is measured, and it is the whole difference between a
+    # window and a door. Cutting one to the floor would be inventing a doorway.
+    room = _room((150.0, 0.0), (240.0, 0.0))
+    assert room.openings[0].kind == "window"
+    thick = BuildSettings().wall_thickness / 10.0
+    shape = build_room(room, BuildSettings())
+    assert _inside(shape, 195.0, -thick / 2, SILL - 30.0), "the sill was cut away"

@@ -171,7 +171,25 @@ def _corner_walk(ring, ea: int, eb: int) -> list[int] | None:
     return walk if len(walk) <= 2 else None
 
 
-def _wrapped_cutter(op: Opening, ring, seats, edges, cfg: BuildSettings, occ):
+def _cut_bottom(op: Opening, floor: Plane | None, cx: float, cy: float) -> float:
+    """Where an opening's cut starts.
+
+    A doorway goes to the floor. The bottom of it is not measured, though: the
+    surveyor shoots the jamb where the frame is, and a shot a few centimetres
+    up leaves that much wall standing under the door - a threshold slab across
+    the doorway that the building does not have. So a door is cut from the
+    floor plane, and the sill only counts where it reads lower still.
+
+    A window keeps its sill. That one really is measured, and it is the whole
+    difference between a window and a door.
+    """
+    if op.kind != "door" or floor is None:
+        return op.sill
+    return min(op.sill, floor.z_at(cx, cy))
+
+
+def _wrapped_cutter(op: Opening, ring, seats, edges, cfg: BuildSettings, occ,
+                    floor: Plane | None = None):
     """The cutter for an opening that turns a corner.
 
     A single box between the two jambs would slice the corner off on the
@@ -208,10 +226,13 @@ def _wrapped_cutter(op: Opening, ring, seats, edges, cfg: BuildSettings, occ):
     footprint = inner + outer[::-1]
     if self_intersections(footprint):
         return None
-    return _prism(footprint, level_plane(op.sill), level_plane(op.head), occ)
+    bottom = _cut_bottom(op, floor, (seats[0][0] + seats[1][0]) / 2,
+                         (seats[0][1] + seats[1][1]) / 2)
+    return _prism(footprint, level_plane(bottom), level_plane(op.head), occ)
 
 
-def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ):
+def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ,
+                    floor: Plane | None = None):
     """A box spanning the wall at an opening, overshooting both faces."""
     reach = cm(cfg.wall_thickness) * 3.0
     ax, ay = op.left.x, op.left.y
@@ -230,7 +251,7 @@ def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ):
     # metre away from it would cut a hole nobody measured.
     seated = max(da, db) <= cm(cfg.wall_thickness) * 2.0
     if ea != eb and seated:
-        wrapped = _wrapped_cutter(op, ring, (sa, sb), (ea, eb), cfg, occ)
+        wrapped = _wrapped_cutter(op, ring, (sa, sb), (ea, eb), cfg, occ, floor)
         if wrapped is not None:
             return wrapped
 
@@ -246,7 +267,8 @@ def _opening_cutter(op: Opening, ring, cfg: BuildSettings, occ):
         (bx + nx * reach, by + ny * reach),
         (ax + nx * reach, ay + ny * reach),
     ]
-    return _prism(corners, level_plane(op.sill), level_plane(op.head), occ)
+    return _prism(corners, level_plane(_cut_bottom(op, floor, cx, cy)),
+                  level_plane(op.head), occ)
 
 
 def build_room(room: Room, cfg: BuildSettings, openings=None,
@@ -302,7 +324,7 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
         # panel is the same four corners in the survey and must not be cut
         # through the wall.
         for op in (o for o in rects if o.cuts):
-            c = occ["Cut"](shape, _opening_cutter(op, inner_ring, cfg, occ))
+            c = occ["Cut"](shape, _opening_cutter(op, inner_ring, cfg, occ, floor))
             c.Build()
             if not c.IsDone():
                 raise BuildError(f"{room.name}: opening cut failed")

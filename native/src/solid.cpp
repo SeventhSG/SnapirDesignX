@@ -193,6 +193,21 @@ bool corner_walk(const std::vector<Pt>& ring, int ea, int eb,
   return !out.empty() && out.size() <= 2;
 }
 
+// Where an opening's cut starts.
+//
+// A doorway goes to the floor. The bottom of it is not measured, though: the
+// surveyor shoots the jamb where the frame is, and a shot a few centimetres up
+// leaves that much wall standing under the door - a threshold slab across the
+// doorway that the building does not have. So a door is cut from the floor
+// plane, and the sill only counts where it reads lower still.
+//
+// A window keeps its sill. That one really is measured, and it is the whole
+// difference between a window and a door.
+double cut_bottom(const Opening& op, const Plane* floor, double cx, double cy) {
+  if (op.kind != "door" || !floor) return op.sill();
+  return std::min(op.sill(), floor->z_at(cx, cy));
+}
+
 // The cutter for an opening that turns a corner.
 //
 // A single box between the two jambs would slice the corner off on the diagonal
@@ -202,7 +217,8 @@ bool corner_walk(const std::vector<Pt>& ring, int ea, int eb,
 // empties along with the two returns.
 bool wrapped_cutter(const Opening& op, const std::vector<Pt>& ring,
                     const Pt seats[2], const int edges[2],
-                    const BuildSettings& cfg, TopoDS_Shape& out) {
+                    const BuildSettings& cfg, TopoDS_Shape& out,
+                    const Plane* floor) {
   std::vector<int> corners;
   if (!corner_walk(ring, edges[0], edges[1], corners)) return false;
   const double reach = cm(cfg.wall_thickness) * 3.0;
@@ -230,13 +246,16 @@ bool wrapped_cutter(const Opening& op, const std::vector<Pt>& ring,
   std::vector<Pt> footprint = inner;
   footprint.insert(footprint.end(), outer.rbegin(), outer.rend());
   if (!self_intersections(footprint).empty()) return false;
-  out = prism(footprint, level_plane(op.sill()), level_plane(op.head()));
+  const double bottom = cut_bottom(op, floor, (seats[0].x + seats[1].x) / 2,
+                                   (seats[0].y + seats[1].y) / 2);
+  out = prism(footprint, level_plane(bottom), level_plane(op.head()));
   return true;
 }
 
 // A box spanning the wall at an opening, overshooting both faces.
 TopoDS_Shape opening_cutter(const Opening& op, const std::vector<Pt>& ring,
-                            const BuildSettings& cfg) {
+                            const BuildSettings& cfg,
+                            const Plane* floor = nullptr) {
   const double reach = cm(cfg.wall_thickness) * 3.0;
   const double ax = op.left.x, ay = op.left.y;
   const double bx = op.right.x, by = op.right.y;
@@ -256,7 +275,7 @@ TopoDS_Shape opening_cutter(const Opening& op, const std::vector<Pt>& ring,
     const Pt seats[2] = {pa.point, pb.point};
     const int edges[2] = {pa.edge, pb.edge};
     TopoDS_Shape wrapped;
-    if (wrapped_cutter(op, ring, seats, edges, cfg, wrapped)) return wrapped;
+    if (wrapped_cutter(op, ring, seats, edges, cfg, wrapped, floor)) return wrapped;
   }
 
   double nx = -dy / length, ny = dx / length;  // wall normal, direction TBD
@@ -273,7 +292,8 @@ TopoDS_Shape opening_cutter(const Opening& op, const std::vector<Pt>& ring,
       {bx + nx * reach, by + ny * reach},
       {ax + nx * reach, ay + ny * reach},
   };
-  return prism(corners, level_plane(op.sill()), level_plane(op.head()));
+  return prism(corners, level_plane(cut_bottom(op, floor, cx, cy)),
+               level_plane(op.head()));
 }
 
 // A synthetic opening spanning the whole edge, floor to ceiling.
@@ -838,7 +858,7 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
     // is the same four corners in the survey and must not be cut through.
     for (const auto& op : rects) {
       if (!op.cuts()) continue;
-      BRepAlgoAPI_Cut c(shape, opening_cutter(op, inner_ring, cfg));
+      BRepAlgoAPI_Cut c(shape, opening_cutter(op, inner_ring, cfg, &floor));
       c.Build();
       if (!c.IsDone()) throw BuildError(room.name + ": opening cut failed");
       shape = c.Shape();
