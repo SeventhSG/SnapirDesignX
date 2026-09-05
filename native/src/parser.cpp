@@ -8,6 +8,8 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -185,6 +187,52 @@ void mark_corner(const std::vector<Point*>& cluster, double floor_z, double ceil
 // a door, wander to a window on another wall, then come back. Two jambs only
 // form an opening when they sit on the same wall run, at a believable width,
 // and span a similar height.
+// Two verticals that could be the two sides of one opening.
+bool same_band(const Jamb& a, const Jamb& b) {
+  return std::abs(a.z_top - b.z_top) <= 25.0 &&
+         std::abs(a.z_bottom - b.z_bottom) <= 40.0;
+}
+
+// Verticals standing on a corner of the room, between two others.
+//
+// A window that turns the corner of a room is glazed on both walls and shot as
+// three verticals, not two: one at each end and one where the two panes meet,
+// which is the corner itself. Pairing takes jambs two at a time, so one of the
+// three was always left over - and with it half the window, which simply never
+// got cut. The room came back with the glass on one wall and solid masonry
+// where the rest of it is.
+//
+// The middle one is a mullion, not an end. Left out of the pairing, the two
+// outer verticals find each other across the corner, and the cutter follows the
+// wall from one to the other.
+std::set<size_t> corner_mullions(const std::vector<Jamb>& jambs,
+                                 const std::vector<Pt>& ring,
+                                 const std::vector<int>& edge_of) {
+  const int n = static_cast<int>(ring.size());
+  std::set<size_t> out;
+  for (size_t i = 0; i < jambs.size(); ++i) {
+    const Jamb& j = jambs[i];
+    int near = 0;
+    double best = std::numeric_limits<double>::infinity();
+    for (int k = 0; k < n; ++k) {
+      const double d = (j.x - ring[k].x) * (j.x - ring[k].x) +
+                       (j.y - ring[k].y) * (j.y - ring[k].y);
+      if (d < best) { best = d; near = k; }
+    }
+    if (std::sqrt(best) > kMullionTol) continue;
+    // One partner on each of the two walls that meet at this corner. Without
+    // both, it is an ordinary jamb that happens to stand near a corner.
+    bool before = false, after = false;
+    for (size_t k = 0; k < jambs.size(); ++k) {
+      if (k == i || !same_band(j, jambs[k])) continue;
+      if (edge_of[k] == ((near - 1) % n + n) % n) before = true;
+      if (edge_of[k] == near % n) after = true;
+    }
+    if (before && after) out.insert(i);
+  }
+  return out;
+}
+
 std::vector<std::pair<Jamb, Jamb>> pair_jambs(const std::vector<Jamb>& jambs,
                                               const std::vector<Pt>& ring) {
   std::vector<std::pair<Jamb, Jamb>> pairs;
@@ -195,7 +243,7 @@ std::vector<std::pair<Jamb, Jamb>> pair_jambs(const std::vector<Jamb>& jambs,
     edge_of[i] = project_onto_edges({jambs[i].x, jambs[i].y}, ring).edge;
 
   const int n = static_cast<int>(ring.size());
-  std::set<size_t> used;
+  std::set<size_t> used = corner_mullions(jambs, ring, edge_of);
   for (size_t i = 0; i < jambs.size(); ++i) {
     if (used.count(i)) continue;
     const Jamb& a = jambs[i];
@@ -222,8 +270,7 @@ std::vector<std::pair<Jamb, Jamb>> pair_jambs(const std::vector<Jamb>& jambs,
       const double width =
           std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
       if (!(width >= 25.0 && width <= kMaxOpeningWidth)) continue;
-      if (std::abs(a.z_top - b.z_top) > 25.0 || std::abs(a.z_bottom - b.z_bottom) > 40.0)
-        continue;
+      if (!same_band(a, b)) continue;
       if (best < 0 || rank < best_rank || (rank == best_rank && width < best_d)) {
         best = static_cast<long long>(k);
         best_rank = rank;
@@ -383,6 +430,80 @@ void detect_pervaz(Room& room) {
 // which is the whole reason to take the shot.
 //
 // Without one the fitting still builds, on the depth in settings.
+// The rectangle's own frame: along its width, and out into the room.
+struct RectFrame { double ax, ay, tx, ty, nx, ny, length; };
+
+std::optional<RectFrame> wall_axes(const Opening& op, const std::vector<Pt>& ring) {
+  const double ax = op.left.x, ay = op.left.y;
+  const double dx = op.right.x - ax, dy = op.right.y - ay;
+  const double length = std::sqrt(dx * dx + dy * dy);
+  if (length < 1.0) return std::nullopt;
+  const double tx = dx / length, ty = dy / length;
+  // Point the normal into the room, so "positive" means the same thing on
+  // every wall however the ring happened to be wound.
+  double nx = -ty, ny = tx;
+  if (ring.size() >= 3) {
+    const Pt mid{(ax + op.right.x) / 2, (ay + op.right.y) / 2};
+    if (!point_in_polygon({mid.x + nx * 0.5, mid.y + ny * 0.5}, ring)) {
+      nx = -nx;
+      ny = -ny;
+    }
+  }
+  return RectFrame{ax, ay, tx, ty, nx, ny, length};
+}
+
+// Was this shot taken right after the rectangle was closed?
+//
+// A point the operator constructed has no place in the survey order at all, so
+// it is judged on its position alone.
+bool shot_after(const Opening& op, const Point& p) {
+  if (p.derived) return true;
+  int last = -1;
+  for (const auto& q : op.left.points) last = std::max(last, q.index);
+  for (const auto& q : op.right.points) last = std::max(last, q.index);
+  if (last < 0) return false;
+  const int gap = p.index - last;
+  return gap > 0 && gap <= kDepthOrderGap;
+}
+
+// Whether this shot could be measuring this rectangle, and how squarely.
+//
+// Returns the signed depth - positive into the room - and a score that is zero
+// dead centre and one at the edge.
+struct DepthFit { double off; double score; };
+
+std::optional<DepthFit> depth_fit(const Opening& op, const Point& p,
+                                  const std::vector<Pt>& ring) {
+  const auto axes = wall_axes(op, ring);
+  if (!axes) return std::nullopt;
+
+  if (!shot_after(op, p)) return std::nullopt;
+  if (p.z < op.sill() - kDepthZTol || p.z > op.head() + kDepthZTol)
+    return std::nullopt;
+  const double along = (p.x - axes->ax) * axes->tx + (p.y - axes->ay) * axes->ty;
+  if (along < -kDepthEdgeTol || along > axes->length + kDepthEdgeTol)
+    return std::nullopt;
+  const double off = (p.x - axes->ax) * axes->nx + (p.y - axes->ay) * axes->ny;
+  if (std::fabs(off) < kDepthMin || std::fabs(off) > kDepthMax) return std::nullopt;
+
+  const double wide = std::fabs(along - axes->length / 2) / (axes->length / 2);
+  const double span = op.head() - op.sill();
+  const double tall =
+      span > 0 ? std::fabs(p.z - (op.sill() + op.head()) / 2) / (span / 2) : 0.0;
+  return DepthFit{off, std::max(wide, tall)};
+}
+
+// Give every rectangle the depth its own shots measured.
+//
+// The surveyor marks a thing on the wall by shooting the rectangle and then
+// putting a point on it: one on the front of the boiler, and one behind it
+// where the back of it reaches. Those two say how deep the thing is - measured,
+// not assumed, which is the whole reason to take them.
+//
+// Neither shot has to land in the middle. It once had to, and that threw away
+// one of every pair - every boiler in a corridor came back with a front and no
+// back. What keeps a stray out is how far off the wall it reads and that it was
+// taken right after the rectangle, not where on it the shot sits.
 void attach_depth_points(Room& room) {
   std::vector<Pt> ring;
   for (const auto& p : room.outline) ring.push_back(xy(p));
@@ -401,70 +522,57 @@ void attach_depth_points(Room& room) {
     for (const Point* p : floors) ring.push_back(xy(*p));
   }
 
-  for (auto& op : room.openings) {
-    const double ax = op.left.x, ay = op.left.y;
-    const double dx = op.right.x - ax, dy = op.right.y - ay;
-    const double length = std::sqrt(dx * dx + dy * dy);
-    if (length < 1.0) continue;
-    const double tx = dx / length, ty = dy / length;
-
-    // Point the normal into the room, so "positive" means the same thing on
-    // every wall however the ring happened to be wound.
-    double nx = -ty, ny = tx;
-    if (ring.size() >= 3) {
-      const Pt mid{(ax + op.right.x) / 2, (ay + op.right.y) / 2};
-      if (!point_in_polygon({mid.x + nx * 0.5, mid.y + ny * 0.5}, ring)) {
-        nx = -nx;
-        ny = -ny;
-      }
-    }
-
-    // One shot per side, kept apart: a rectangle can be let into the wall and
-    // stand out of it at once, and the nearest shot alone would only ever
-    // describe half of that.
-    Point* outward = nullptr;
-    Point* inward = nullptr;
-    double out_off = 0.0, in_off = 0.0;
-    for (auto& p : room.points) {
-      // Already-tagged depth shots are candidates too. After the first pass
-      // the shot is no longer Unknown, and a detector that could not see it
-      // would fail to re-attach on the next rebuild - which turned the object
+  // Every shot that could be measuring something, against every rectangle it
+  // could be measuring. A shot belongs to one rectangle only: two of them
+  // stacked on one wall - a cupboard over a radiator - both contain the gap
+  // between them, and the shot there measures whichever it sits more squarely
+  // in, not both.
+  struct Claim { double off; size_t op; double score; };
+  std::map<std::string, Claim> owner;
+  for (size_t k = 0; k < room.openings.size(); ++k) {
+    for (const auto& p : room.points) {
+      // Already-tagged depth shots are candidates too. After the first pass the
+      // shot is no longer Unknown, and a detector that could not see it would
+      // fail to re-attach on the next rebuild - which turned the object
       // straight back into a hole on the operator's first correction.
       if ((p.role != Role::Unknown && p.role != Role::Depth) || p.pinned) continue;
-      if (!(p.z >= op.sill() && p.z <= op.head())) continue;
-      const double along = (p.x - ax) * tx + (p.y - ay) * ty;
-      if (along < -kDepthEdgeTol || along > length + kDepthEdgeTol) continue;
-      // Near the middle, not merely inside the span.
-      if (std::fabs(along - length / 2) > length / 2 * kDepthCentre) continue;
-      const double span = op.head() - op.sill();
-      if (span > 0 &&
-          std::fabs(p.z - (op.sill() + op.head()) / 2) > span / 2 * kDepthCentre)
-        continue;
-      const double off = (p.x - ax) * nx + (p.y - ay) * ny;
-      if (std::fabs(off) < kDepthMin || std::fabs(off) > kDepthMax) continue;
-      // The furthest shot on each side is the one that describes it: a nearer
-      // one is somewhere in the middle of the same object.
-      if (off > 0) {
-        if (!outward || std::fabs(off) > std::fabs(out_off)) {
-          outward = &p;
-          out_off = off;
-        }
-      } else if (!inward || std::fabs(off) > std::fabs(in_off)) {
-        inward = &p;
-        in_off = off;
-      }
+      const auto fit = depth_fit(room.openings[k], p, ring);
+      if (!fit) continue;
+      const auto it = owner.find(p.name);
+      if (it == owner.end() || fit->score < it->second.score)
+        owner[p.name] = Claim{fit->off, k, fit->score};
     }
+  }
 
-    op.depth_points.clear();
-    if (outward) {
-      outward->role = Role::Depth;
-      op.depth_points.push_back(outward->name);
-      op.out_depth = std::fabs(out_off);
+  std::map<std::string, Point*> by_name;
+  for (auto& p : room.points) by_name[p.name] = &p;
+
+  // The furthest shot on each side is the one that describes it: a nearer one
+  // is somewhere in the middle of the same object.
+  std::vector<std::array<Point*, 2>> picked(room.openings.size(), {nullptr, nullptr});
+  std::vector<std::array<double, 2>> offs(room.openings.size(), {0.0, 0.0});
+  for (const auto& kv : owner) {
+    const int side = kv.second.off > 0 ? 0 : 1;
+    auto& slot = picked[kv.second.op][side];
+    auto& val = offs[kv.second.op][side];
+    if (!slot || std::fabs(kv.second.off) > std::fabs(val)) {
+      slot = by_name[kv.first];
+      val = kv.second.off;
     }
-    if (inward) {
-      inward->role = Role::Depth;
-      op.depth_points.push_back(inward->name);
-      op.in_depth = std::fabs(in_off);
+  }
+
+  for (size_t k = 0; k < room.openings.size(); ++k) {
+    Opening& op = room.openings[k];
+    op.depth_points.clear();
+    if (picked[k][0]) {
+      picked[k][0]->role = Role::Depth;
+      op.depth_points.push_back(picked[k][0]->name);
+      op.out_depth = std::fabs(offs[k][0]);
+    }
+    if (picked[k][1]) {
+      picked[k][1]->role = Role::Depth;
+      op.depth_points.push_back(picked[k][1]->name);
+      op.in_depth = std::fabs(offs[k][1]);
     }
 
     // The shots themselves say what this is. Nobody measures how far a doorway
@@ -473,7 +581,7 @@ void attach_depth_points(Room& room) {
     // this later.
     if (op.measured() &&
         (op.kind == "door" || op.kind == "window" || op.kind == "unknown"))
-      op.kind = outward ? "object" : "niche";
+      op.kind = picked[k][0] ? "object" : "niche";
   }
 }
 

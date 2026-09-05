@@ -318,7 +318,12 @@ def build_room(room: Room, cfg: BuildSettings, openings=None,
             if op.cuts or op.kind == "empty":
                 continue
 
-            if op.in_depth or (op.recesses and not op.measured):
+            # A rectangle with a shot on each side is one thing, as deep as the
+            # two of them say: the body runs from the back shot to the front
+            # one and fills the space between. Hollowing it out first and then
+            # standing a thin box in the mouth was two half-answers - the
+            # boiler was a 3 cm plate with a 25 cm hole behind it.
+            if (op.in_depth and not op.out_depth) or (op.recesses and not op.measured):
                 c = occ["Cut"](shape, _recess_cutter(op, inner_ring, cfg, occ))
                 c.Build()
                 if not c.IsDone():
@@ -485,16 +490,18 @@ def _fitting_body(op: Opening, ring, cfg: BuildSettings, occ):
         from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 
         radius = max(op.width, 1.0) / 2
-        centre = min(depth - radius, radius - bite)
+        centre = min(depth - radius, radius - (op.in_depth or bite))
         base = gp_Pnt((sx + nx * centre) * CM_TO_MM,
                       (sy + ny * centre) * CM_TO_MM, op.sill * CM_TO_MM)
         axis = gp_Ax2(base, gp_Dir(0.0, 0.0, 1.0))
         return BRepPrimAPI_MakeCylinder(
             axis, radius * CM_TO_MM, max(op.height, 1.0) * CM_TO_MM).Shape()
 
-    # Everything else is a box the size of the rectangle, standing proud.
+    # Everything else is a box the size of the rectangle, standing proud. Where
+    # the surveyor shot the back of it too, that is where it reaches: the two
+    # shots are the whole depth of the thing, not just the part in the room.
     half = max(op.width, 1.0) / 2
-    back, front = -bite, depth
+    back, front = -(op.in_depth or bite), depth
     corners = [
         (sx + tx * half + nx * back, sy + ty * half + ny * back),
         (sx - tx * half + nx * back, sy - ty * half + ny * back),

@@ -107,3 +107,63 @@ def test_a_window_on_one_wall_is_untouched():
     thick = BuildSettings().wall_thickness / 10.0
     assert not _inside(shape, 200.0, -thick / 2, (SILL + HEAD) / 2)
     assert _inside(shape, 350.0, -thick / 2, (SILL + HEAD) / 2)
+
+
+def _room_three_verticals():
+    """A corner window as it is actually shot: one vertical at each end and
+    one on the corner itself, where the two panes meet."""
+    rows, n = ["Kimlik;X (cm);Y (cm);Z (cm);Katman"], 1
+
+    def add(x, y, z, layer):
+        nonlocal n
+        rows.append(f"P_{n:03d};{x:.2f};{y:.2f};{z:.2f};{layer}")
+        n += 1
+
+    for x, y in CORNERS:
+        add(x, y, 0.0, "Zemin")
+    for x, y in CORNERS:
+        add(x, y, CEIL, "")
+    # Left jamb, the mullion standing on the corner, right jamb.
+    for x, y in ((300.0, 0.0), (400.0, 0.0), (400.0, 100.0)):
+        add(x, y, SILL, "Katman 0")
+        add(x, y, HEAD, "Katman 0")
+
+    p = Path(tempfile.mkdtemp()) / "Mullion.csv"
+    p.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return read_room(p)
+
+
+def test_three_verticals_make_one_window_not_one_and_a_half():
+    # Pairing takes jambs two at a time, so the third was always left over -
+    # and with it half the window, which simply never got cut. The room came
+    # back with glass on one wall and masonry where the rest of it is.
+    room = _room_three_verticals()
+    assert len(room.openings) == 1
+    op = room.openings[0]
+    ends = sorted([(round(op.left.x), round(op.left.y)),
+                   (round(op.right.x), round(op.right.y))])
+    assert ends == [(300, 0), (400, 100)], "the window stops at the corner"
+
+
+def test_the_far_half_of_a_corner_window_is_cut_too():
+    cfg = BuildSettings()
+    thick = cfg.wall_thickness / 10.0
+    shape = build_room(_room_three_verticals(), cfg)
+    mid = (SILL + HEAD) / 2
+
+    assert not _inside(shape, 350.0, -thick / 2, mid), "the near half is solid"
+    assert not _inside(shape, 400 + thick / 2, 50.0, mid), "the far half is solid"
+    assert not _inside(shape, 400 + thick / 2, -thick / 2, mid), "the pier is still there"
+    # And the walls beyond it are untouched.
+    assert _inside(shape, 240.0, -thick / 2, mid)
+    assert _inside(shape, 400 + thick / 2, 170.0, mid)
+
+
+def test_a_jamb_near_a_corner_with_nothing_beyond_it_is_still_a_jamb():
+    # The rule only fires where there is a vertical on each of the two walls
+    # that meet at the corner. An ordinary door that happens to start at a
+    # corner must keep both its sides.
+    room = _room((400.0, 0.0), (400.0, 100.0))
+    assert len(room.openings) == 1
+    op = room.openings[0]
+    assert op.width == pytest.approx(100.0, abs=1.0)

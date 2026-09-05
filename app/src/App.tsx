@@ -419,6 +419,7 @@ export default function App() {
     setPending(null);
     setLineSel(null);
     setAddedLines([]); setDroppedLines([]); setDroppedPoints([]);
+    applied.current = "";
     setResult(null);
     setTool("face");
     setScreen("work");
@@ -1023,6 +1024,33 @@ export default function App() {
 
   const inSketch = tool === "sketch";
 
+  /* Every change to the ring goes straight into the body.
+   *
+   * Drawing an outline and then having to remember to press Apply meant the
+   * 3D was quietly one edit behind for as long as you were working, and the
+   * body you were looking at was not the room you had just drawn. Every other
+   * edit in the sketch already rebuilt on the spot; the ring was the one that
+   * did not.
+   *
+   * Debounced, because a ring is drawn as a run of clicks and each one is not
+   * worth its own trip through the kernel. Under three corners there is no
+   * room to build yet, so nothing is sent. */
+  const applied = useRef("");
+  useEffect(() => {
+    if (!inSketch || edit !== "outline" || !room || ring.length < 3) return;
+    const key = ring.join("|");
+    if (key === applied.current) return;
+    // Already what the room is built from - the ring was only reset, not redrawn.
+    if (key === room.outline.join("|")) { applied.current = key; return; }
+    const t = setTimeout(() => {
+      applied.current = key;
+      void patch({ outlineOrder: ring }, true);
+    }, 400);
+    return () => clearTimeout(t);
+    // patch closes over project/room, both already here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ring, edit, inSketch, room]);
+
   const sketchProps = useMemo(() => {
     if (!inSketch || !room) return null;
     return {
@@ -1512,8 +1540,11 @@ export default function App() {
                     {T("sketchWipe")}</button>
                   <button className="btn q sm" onClick={() => setRing(room.outline)}>
                     {T("sketchReset")}</button>
+                  {/* The ring applies itself as it is drawn; this is for
+                      when you would rather not wait out the pause. */}
                   <button className="btn sm" disabled={ring.length < 3}
                           onClick={async () => {
+                            applied.current = ring.join("|");
                             await patch({ outlineOrder: ring }, true);
                             say(T("outlineApplied"));
                           }}>

@@ -46,6 +46,9 @@ FLOOR_TOL = 12.0         # a shot this near the floor datum sits on the slab
 CEILING_TOL = 18.0       # ceilings are not flat; allow real sag
 MIN_ROOM_HEIGHT = 150.0  # below this, the high band is not a ceiling
 MIN_JAMB_SPAN = 40.0     # a jamb has to be taller than this to be an opening
+# A vertical this close to a ring corner is standing on it: the mullion where
+# the two halves of a corner window meet, rather than the end of an opening.
+MULLION_TOL = 15.0       # cm
 JAMB_XY_TOL = 12.0       # two shots this close in plan are the same vertical
 CORNER_MERGE = 2.5       # two ring corners this close in plan are one corner
 
@@ -333,33 +336,104 @@ def _detect_pervaz(room: Room) -> None:
             break
 
 
-# A shot in the middle of a wall rectangle, standing off the wall. Nothing else
-# lands inside a rectangle's own span at its own height.
-DEPTH_MAX = 200.0        # cm; further out than this is not a fitting on a wall
+# A shot on a wall rectangle, standing off the wall: how deep the thing is.
+#
+# Nothing is asked of where on the rectangle it lands - the surveyor puts one
+# on the front of the boiler and one behind it, and neither is dead centre.
+# What keeps a stray out is how far off the wall it reads: the top of a doorway
+# two metres up once claimed one, and the door came back as a box 84 x 200 x
+# 131 cm standing in the corridor. Nothing hung on a wall is 131 cm deep.
+DEPTH_MAX = 75.0         # cm; further out than this is not a fitting on a wall
 DEPTH_MIN = 0.5          # cm; closer than this is a shot on the wall itself
 DEPTH_EDGE_TOL = 5.0     # cm the shot may sit outside the rectangle's width
-# "A point in the middle of it" is the whole convention, so the shot has to
-# actually be near the middle - within the central half of the rectangle both
-# ways. Anything else is a shot that merely fell inside the span: the top of a
-# doorway two metres up claimed one, and the door came back as a box 84 x 200 x
-# 131 cm standing in the corridor.
-DEPTH_CENTRE = 0.5       # fraction of the half-width and half-height
+DEPTH_Z_TOL = 15.0       # cm it may sit above or below it
+# And it is taken straight after the rectangle, which is the other half of the
+# convention: shoot the four corners, then put the depth on it. That ordering
+# is what separates the real ones from a shot that merely happens to fall
+# inside a doorway - a cupboard front, a socket, the leaf of an open door.
+DEPTH_ORDER_GAP = 2      # shots after the rectangle's last corner
+
+
+def _wall_axes(op: Opening, ring):
+    """The rectangle's own frame: along its width, and out into the room."""
+    ax, ay = op.left.x, op.left.y
+    dx, dy = op.right.x - ax, op.right.y - ay
+    length = (dx * dx + dy * dy) ** 0.5
+    if length < 1.0:
+        return None
+    tx, ty = dx / length, dy / length
+    # Point the normal into the room, so "positive" means the same thing on
+    # every wall however the ring happened to be wound.
+    nx, ny = -ty, tx
+    if len(ring) >= 3:
+        mid = ((ax + op.right.x) / 2, (ay + op.right.y) / 2)
+        if not point_in_polygon((mid[0] + nx * 0.5, mid[1] + ny * 0.5), ring):
+            nx, ny = -nx, -ny
+    return (ax, ay), (tx, ty), (nx, ny), length
+
+
+def _shot_after(op: Opening, p: Point) -> bool:
+    """Was this shot taken right after the rectangle was closed?
+
+    A point the operator constructed has no place in the survey order at all,
+    so it is judged on its position alone.
+    """
+    if p.derived:
+        return True
+    corners = [q.index for q in op.left.points + op.right.points]
+    if not corners:
+        return False
+    return 0 < p.index - max(corners) <= DEPTH_ORDER_GAP
+
+
+def _depth_fit(op: Opening, p: Point, ring) -> tuple[float, float] | None:
+    """Whether this shot could be measuring this rectangle, and how squarely.
+
+    Returns the signed depth - positive into the room - and a score that is
+    zero dead centre and one at the edge. None when the shot is not on this
+    rectangle at all.
+    """
+    axes = _wall_axes(op, ring)
+    if axes is None:
+        return None
+    (ax, ay), (tx, ty), (nx, ny), length = axes
+
+    if not _shot_after(op, p):
+        return None
+    if not (op.sill - DEPTH_Z_TOL <= p.z <= op.head + DEPTH_Z_TOL):
+        return None
+    along = (p.x - ax) * tx + (p.y - ay) * ty
+    if not (-DEPTH_EDGE_TOL <= along <= length + DEPTH_EDGE_TOL):
+        return None
+    off = (p.x - ax) * nx + (p.y - ay) * ny
+    if not (DEPTH_MIN <= abs(off) <= DEPTH_MAX):
+        return None
+
+    wide = abs(along - length / 2) / (length / 2)
+    span = op.head - op.sill
+    tall = abs(p.z - (op.sill + op.head) / 2) / (span / 2) if span > 0 else 0.0
+    return off, max(wide, tall)
 
 
 def _attach_depth_points(room: Room) -> None:
-    """Give every rectangle the depth its middle shot measured.
+    """Give every rectangle the depth its own shots measured.
 
     The surveyor marks a thing on the wall by shooting the rectangle and then
-    one point in the middle of it. How far that point sits off the wall is how
-    deep the thing is - measured, not assumed, which is the whole reason to
-    take the shot.
+    putting a point on it: one on the front of the boiler, and one behind it
+    where the back of it reaches. Those two say how deep the thing is -
+    measured, not assumed, which is the whole reason to take them.
 
-    Which side it sits on is the other half of the answer. A shot standing into
-    the room is a thing mounted on the wall; a shot behind the wall face is a
-    recess cut back into it. So the depth is kept signed, positive into the
-    room, and the sign decides whether material is added or taken away.
+    Which side each sits on is the other half of the answer. A shot standing
+    into the room is a thing mounted on the wall; a shot behind the wall face
+    is let into it. So the depth is kept signed, positive into the room, and a
+    rectangle with one of each is a thing that does both at once.
 
-    Without a middle shot the fitting still builds, on the depth in settings.
+    Neither shot has to land in the middle. It once had to, and that threw away
+    one of every pair - every boiler in a corridor came back with a front and
+    no back. What keeps a stray out is how far off the wall it reads, not where
+    on the rectangle it sits.
+
+    Without a shot at all the fitting still builds, on the depth in settings.
     """
     # On the inferred path the ring has not been assembled yet, and without one
     # there is no telling which side of a wall is the room. The sign of the
@@ -370,28 +444,14 @@ def _attach_depth_points(room: Room) -> None:
     ring = [p.xy for p in room.outline] or [
         p.xy for p in sorted((q for q in room.points if q.role is Role.FLOOR),
                              key=lambda q: q.index)]
+
+    # Every shot that could be measuring something, against every rectangle it
+    # could be measuring. A shot belongs to one rectangle only: two of them
+    # stacked on one wall - a cupboard over a radiator - both contain the gap
+    # between them, and the shot there measures whichever it sits more squarely
+    # in, not both.
+    owner: dict[str, tuple[float, Opening, float]] = {}
     for op in room.openings:
-        ax, ay = op.left.x, op.left.y
-        bx, by = op.right.x, op.right.y
-        dx, dy = bx - ax, by - ay
-        length = (dx * dx + dy * dy) ** 0.5
-        if length < 1.0:
-            continue
-        tx, ty = dx / length, dy / length
-
-        # Point the normal into the room, so "positive" means the same thing on
-        # every wall however the ring happened to be wound.
-        nx, ny = -ty, tx
-        if len(ring) >= 3:
-            mid = ((ax + bx) / 2, (ay + by) / 2)
-            if not point_in_polygon((mid[0] + nx * 0.5, mid[1] + ny * 0.5), ring):
-                nx, ny = -nx, -ny
-
-        # One shot per side, kept apart: a rectangle can be let into the wall
-        # and stand out of it at once, and the nearest shot alone would only
-        # ever describe half of that.
-        outward: tuple[float, Point] | None = None
-        inward: tuple[float, Point] | None = None
         for p in room.points:
             # Already-tagged depth shots are candidates too. After the first
             # pass the shot is no longer UNKNOWN, and a detector that could not
@@ -400,46 +460,41 @@ def _attach_depth_points(room: Room) -> None:
             # correction.
             if p.role not in (Role.UNKNOWN, Role.DEPTH) or p.pinned:
                 continue
-            if not (op.sill <= p.z <= op.head):
+            fit = _depth_fit(op, p, ring)
+            if fit is None:
                 continue
-            along = (p.x - ax) * tx + (p.y - ay) * ty
-            if not (-DEPTH_EDGE_TOL <= along <= length + DEPTH_EDGE_TOL):
-                continue
-            # Near the middle, not merely inside the span.
-            if abs(along - length / 2) > length / 2 * DEPTH_CENTRE:
-                continue
-            span = op.head - op.sill
-            if span > 0 and abs(p.z - (op.sill + op.head) / 2) > span / 2 * DEPTH_CENTRE:
-                continue
-            off = (p.x - ax) * nx + (p.y - ay) * ny
-            if not (DEPTH_MIN <= abs(off) <= DEPTH_MAX):
-                continue
-            side = "outward" if off > 0 else "inward"
-            best = outward if side == "outward" else inward
-            # The furthest shot on each side is the one that describes it: a
-            # nearer one is somewhere in the middle of the same object.
-            if best is None or abs(off) > abs(best[0]):
-                if side == "outward":
-                    outward = (abs(off), p)
-                else:
-                    inward = (abs(off), p)
+            off, score = fit
+            if p.name not in owner or score < owner[p.name][2]:
+                owner[p.name] = (off, op, score)
 
+    by_name = {p.name: p for p in room.points}
+    claimed: dict[int, dict[str, tuple[float, Point]]] = {}
+    for name, (off, op, _score) in owner.items():
+        side = claimed.setdefault(id(op), {})
+        key = "out" if off > 0 else "in"
+        # The furthest shot on each side is the one that describes it: a nearer
+        # one is somewhere in the middle of the same object.
+        if key not in side or abs(off) > abs(side[key][0]):
+            side[key] = (off, by_name[name])
+
+    for op in room.openings:
+        side = claimed.get(id(op), {})
         op.depth_points = []
-        for found in (outward, inward):
-            if found is not None:
-                found[1].role = Role.DEPTH
-                op.depth_points.append(found[1].name)
-        if outward is not None:
-            op.out_depth = outward[0]
-        if inward is not None:
-            op.in_depth = inward[0]
+        for key in ("out", "in"):
+            if key in side:
+                side[key][1].role = Role.DEPTH
+                op.depth_points.append(side[key][1].name)
+        if "out" in side:
+            op.out_depth = abs(side["out"][0])
+        if "in" in side:
+            op.in_depth = abs(side["in"][0])
 
         # The shots themselves say what this is. Nobody measures how far a
         # doorway sticks out of a wall, so a rectangle with one is a thing on
         # the wall rather than a hole through it. An operator's own choice
         # still overrides this later.
         if op.measured and op.kind in ("door", "window", "unknown"):
-            op.kind = "niche" if outward is None else "object"
+            op.kind = "niche" if op.out_depth is None else "object"
 
 
 def _step_move(a: Point, b: Point) -> str | None:
@@ -676,6 +731,46 @@ def read_project(folder: str | Path, name: str = "") -> Project:
     return proj
 
 
+def _same_band(a: Jamb, b: Jamb) -> bool:
+    """Two verticals that could be the two sides of one opening."""
+    return abs(a.z_top - b.z_top) <= 25.0 and abs(a.z_bottom - b.z_bottom) <= 40.0
+
+
+def _corner_mullions(jambs: list[Jamb], ring, edge_of) -> set[int]:
+    """Verticals standing on a corner of the room, between two others.
+
+    A window that turns the corner of a room is glazed on both walls and shot
+    as three verticals, not two: one at each end and one where the two panes
+    meet, which is the corner itself. Pairing takes jambs two at a time, so one
+    of the three was always left over - and with it half the window, which
+    simply never got cut. The room came back with the glass on one wall and
+    solid masonry where the rest of it is.
+
+    The middle one is a mullion, not an end. Left out of the pairing, the two
+    outer verticals find each other across the corner, and the cutter follows
+    the wall from one to the other.
+    """
+    n = len(ring)
+    out: set[int] = set()
+    for i, j in enumerate(jambs):
+        near = min(range(n), key=lambda k: (j.x - ring[k][0]) ** 2 + (j.y - ring[k][1]) ** 2)
+        if _dist2d_xy((j.x, j.y), ring[near]) > MULLION_TOL:
+            continue
+        # One partner on each of the two walls that meet at this corner. Without
+        # both, it is an ordinary jamb that happens to stand near a corner.
+        before = any(k != i and edge_of[id(b)] == (near - 1) % n and _same_band(j, b)
+                     for k, b in enumerate(jambs))
+        after = any(k != i and edge_of[id(b)] == near % n and _same_band(j, b)
+                    for k, b in enumerate(jambs))
+        if before and after:
+            out.add(i)
+    return out
+
+
+def _dist2d_xy(a, b) -> float:
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
 def _pair_jambs(jambs: list[Jamb], ring) -> list[tuple[Jamb, Jamb]]:
     """Match jambs into openings, but only where they share a wall.
 
@@ -701,7 +796,7 @@ def _pair_jambs(jambs: list[Jamb], ring) -> list[tuple[Jamb, Jamb]]:
         idx, _seat, _d = project_onto_edges((j.x, j.y), list(ring))
         edge_of[id(j)] = idx
 
-    used: set[int] = set()
+    used = _corner_mullions(jambs, list(ring), edge_of)
     pairs: list[tuple[Jamb, Jamb]] = []
     for i, a in enumerate(jambs):
         if i in used:
@@ -721,7 +816,7 @@ def _pair_jambs(jambs: list[Jamb], ring) -> list[tuple[Jamb, Jamb]]:
             width = ((a.x - b.x) ** 2 + (a.y - b.y) ** 2) ** 0.5
             if not 25.0 <= width <= MAX_OPENING_WIDTH:
                 continue
-            if abs(a.z_top - b.z_top) > 25.0 or abs(a.z_bottom - b.z_bottom) > 40.0:
+            if not _same_band(a, b):
                 continue
             if best_rank is None or (rank, width) < best_rank:
                 best, best_rank = k, (rank, width)

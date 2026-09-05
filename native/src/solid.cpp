@@ -395,7 +395,8 @@ TopoDS_Shape fitting_body(const Opening& op, const std::vector<Pt>& ring,
     // diameter, the depth says how far it stands out, so the front of the
     // cylinder lands on the shot the same way a box's face would.
     const double radius = std::max(op.width(), 1.0) / 2;
-    const double centre = std::min(depth - radius, radius - bite);
+    const double centre =
+        std::min(depth - radius, radius - (op.in_depth ? *op.in_depth : bite));
     const gp_Pnt base((w.seat.x + w.normal.x * centre) * kCmToMm,
                       (w.seat.y + w.normal.y * centre) * kCmToMm,
                       op.sill() * kCmToMm);
@@ -406,7 +407,9 @@ TopoDS_Shape fitting_body(const Opening& op, const std::vector<Pt>& ring,
   }
 
   const double half = std::max(op.width(), 1.0) / 2;
-  const double back = -bite, front = depth;
+  // Where the surveyor shot the back of it too, that is where it reaches: the
+  // two shots are the whole depth of the thing, not just the part in the room.
+  const double back = -(op.in_depth ? *op.in_depth : bite), front = depth;
   const std::vector<Pt> corners = {
       {w.seat.x + w.tangent.x * half + w.normal.x * back,
        w.seat.y + w.tangent.y * half + w.normal.y * back},
@@ -851,7 +854,12 @@ TopoDS_Shape build_room(Room& room, const BuildSettings& cfg,
     for (const auto& op : rects) {
       if (op.cuts() || op.kind == "empty") continue;
 
-      if (op.in_depth || (op.recesses() && !op.measured())) {
+      // A rectangle with a shot on each side is one thing, as deep as the two
+      // of them say: the body runs from the back shot to the front one and
+      // fills the space between. Hollowing it out first and then standing a
+      // thin box in the mouth was two half-answers - the boiler was a 3 cm
+      // plate with a 25 cm hole behind it.
+      if ((op.in_depth && !op.out_depth) || (op.recesses() && !op.measured())) {
         BRepAlgoAPI_Cut c(shape, recess_cutter(op, inner_ring, cfg));
         c.Build();
         if (!c.IsDone())

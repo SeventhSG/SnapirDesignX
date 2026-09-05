@@ -50,7 +50,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.3.13";
+constexpr const char* kVersion = "1.3.14";
 
 std::mutex g_lock;
 Store* g_store = nullptr;

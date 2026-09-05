@@ -42,22 +42,31 @@ inline constexpr double kStairPlumbTol = 8.0;    // a riser move travels no furt
 
 // Pervaz: skirting, shot as two points at one corner. Nothing else in a survey
 // puts two floor shots this close together at two different heights.
+// A vertical this close to a ring corner is standing on it: the mullion where
+// the two halves of a corner window meet, rather than the end of an opening.
+inline constexpr double kMullionTol = 15.0;      // cm
+
 inline constexpr double kPervazDepthMin = 0.3;   // cm the board stands proud
 inline constexpr double kPervazDepthMax = 8.0;
 inline constexpr double kPervazHeightMin = 3.0;
 inline constexpr double kPervazHeightMax = 30.0;
 
-// A shot in the middle of a wall rectangle, standing off the wall. Nothing
-// else lands inside a rectangle's own span at its own height.
-inline constexpr double kDepthMax = 200.0;      // cm
+// A shot on a wall rectangle, standing off the wall: how deep the thing is.
+//
+// Nothing is asked of where on the rectangle it lands - the surveyor puts one
+// on the front of the boiler and one behind it, and neither is dead centre.
+// What keeps a stray out is how far off the wall it reads: the top of a doorway
+// two metres up once claimed one, and the door came back as a box 84 x 200 x
+// 131 cm standing in the corridor. Nothing hung on a wall is 131 cm deep.
+inline constexpr double kDepthMax = 75.0;       // cm
 inline constexpr double kDepthMin = 0.5;        // cm
 inline constexpr double kDepthEdgeTol = 5.0;    // cm outside the width
-// "A point in the middle of it" is the whole convention, so the shot has to
-// actually be near the middle - within the central half of the rectangle both
-// ways. Anything else merely fell inside the span: the top of a doorway two
-// metres up claimed one, and the door came back as a box 84 x 200 x 131 cm
-// standing in the corridor.
-inline constexpr double kDepthCentre = 0.5;
+inline constexpr double kDepthZTol = 15.0;      // cm above or below it
+// And it is taken straight after the rectangle, which is the other half of the
+// convention: shoot the four corners, then put the depth on it. That ordering
+// is what separates the real ones from a shot that merely happens to fall
+// inside a doorway - a cupboard front, a socket, the leaf of an open door.
+inline constexpr int kDepthOrderGap = 2;
 
 // Parse one room CSV into a classified Room.
 Room read_room(const std::string& path);

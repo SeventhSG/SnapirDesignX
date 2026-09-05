@@ -285,7 +285,24 @@ def test_two_dots_are_kept_one_per_side():
     assert not any(i.code == "unclassified" for i in room.issues)
 
 
-def test_two_dots_build_in_both_directions():
+def _inside(shape, x: float, y: float, z: float) -> bool:
+    """Is there material at this spot, in survey centimetres?"""
+    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCP.gp import gp_Pnt
+    from OCP.TopAbs import TopAbs_IN, TopAbs_ON
+
+    from snapir.solid import CM_TO_MM
+
+    cls = BRepClass3d_SolidClassifier(shape)
+    cls.Perform(gp_Pnt(x * CM_TO_MM, y * CM_TO_MM, z * CM_TO_MM), 1e-6)
+    return cls.State() in (TopAbs_IN, TopAbs_ON)
+
+
+def test_two_dots_build_one_body_between_them():
+    # Two shots are the two ends of one thing: the front of the boiler and the
+    # back of it. Hollowing the wall out to the back shot and then standing a
+    # box in the mouth was two half-answers, and left the boiler as a plate
+    # with a void behind it.
     from snapir.solid import build_room, solid_stats
 
     cfg = BuildSettings()
@@ -293,14 +310,31 @@ def test_two_dots_build_in_both_directions():
     bare.openings = []
     plain = solid_stats(build_room(bare, cfg))["volume_m3"]
 
-    both = solid_stats(build_room(_room_with_two_dots(30.0, -7.0), cfg))
-    only_out = solid_stats(build_room(_room_with_depth_shot(30.0), cfg))["volume_m3"]
-
+    shape = build_room(_room_with_two_dots(30.0, -7.0), cfg)
+    both = solid_stats(shape)
     assert both["solids"] == 1
-    # The box added out to 30 cm, and the wall hollowed back 7 cm behind it -
-    # so it carries less material than the same box on an untouched wall.
     assert both["volume_m3"] > plain
-    assert both["volume_m3"] < only_out
+
+    # Solid the whole way through: at the front shot, in the middle, and in the
+    # wall behind it where the back shot reaches.
+    for y in (28.0, 15.0, 1.0, -6.0):
+        assert _inside(shape, 180.0, y, 170.0), f"hollow at y={y}"
+    # And it stops at the shot rather than running on.
+    assert not _inside(shape, 180.0, 34.0, 170.0)
+
+
+def test_a_back_shot_alone_still_hollows_the_wall():
+    # One shot behind the face and none in front is a recess, and has to stay
+    # one: the wall is cut back to the depth measured and no further.
+    from snapir.solid import build_room
+
+    room = _room_with_two_dots(out_off=30.0, in_off=-7.0)
+    op = room.openings[0]
+    op.out_depth = None
+    op.kind = "niche"
+    shape = build_room(room, BuildSettings(), openings=[op])
+    assert not _inside(shape, 180.0, -4.0, 170.0), "the recess was not cut"
+    assert _inside(shape, 180.0, -12.0, 170.0), "it was cut past the shot"
 
 
 def test_the_further_shot_on_a_side_wins():
