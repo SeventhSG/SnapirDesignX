@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, panoramaUrl, type BuildResult, type Connection, type Crossing,
          type Project, type Room, type Status } from "./api";
 import { t, type Key, type Lang } from "./i18n";
+import Merge from "./Merge";
 import Sketch, { type EditMode } from "./Sketch";
 import Viewport, { ROLE_COLOR, type AimHit, type DoorLink,
          type GhostRoom } from "./Viewport";
@@ -160,7 +161,7 @@ function Mark({ className = "mk" }: { className?: string }) {
 type Theme = "light" | "dark";
 
 type Screen = "launch" | "home" | "projects" | "rooms" | "flat" | "work"
-  | "project" | "settings";
+  | "project" | "settings" | "merge";
 
 /** Roles the operator can assign, in the order they appear in the picker. */
 const ROLES: { role: string; key: Key }[] = [
@@ -1211,6 +1212,12 @@ export default function App() {
           </div>
         )}
 
+        {screen === "merge" && project && (
+          <Merge projectId={project.id} projectName={project.name} lang={lang}
+                 onClose={() => setScreen(grouped ? "rooms" : "rooms")}
+                 onSay={say} />
+        )}
+
         {/* ---------------- flats ---------------- */}
         {screen === "rooms" && project && (
           <div className="page">
@@ -1221,6 +1228,11 @@ export default function App() {
                 {counts.ready} {T("ready")} · {counts.built} {T("built")} · {counts.needs} {T("needsYou")}
               </span>
               <div className="sp">
+                {/* Every room of the survey is in its own coordinate system.
+                    This is where they are put into one. */}
+                <button className="btn q sm" title={T("mergeHelp")}
+                        onClick={() => setScreen("merge")}>
+                  {T("mergeOpen")}</button>
                 <button className="btn q sm" onClick={openProjectSettings}>
                   {T("projectSettings")}</button>
               </div>

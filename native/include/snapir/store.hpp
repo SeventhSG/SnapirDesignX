@@ -86,6 +86,12 @@ struct ProjectRecord {
   double thickness = 200.0;  // mm
   std::map<std::string, RoomOverride> overrides;
   std::vector<Connection> connections;
+  // Sketch merge: the operator's own "this corner is that corner" pairs, and
+  // which room is the frame everything else comes to. The placements are not
+  // stored - they are solved from these every time, so a pair added or deleted
+  // never leaves a stale transform behind it.
+  std::vector<Json> merge_pairs;
+  std::optional<std::string> merge_anchor;
 
   void touch() { opened_at = now_iso8601(); }
 };

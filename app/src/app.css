@@ -749,3 +749,52 @@ button{font-family:inherit}
 /* The Design X group: full-width actions, stacked, so the three read as one
    sequence - out, back, and undo - rather than a row of unrelated buttons. */
 .grp .btn.wide + .btn.wide{margin-top:6px}
+
+/* ------------------------------------------------ sketch merger
+   Every room of a survey in one plan: the ones already placed where they were
+   solved to, the rest parked to the right where their corners can still be
+   clicked. One canvas rather than two panes, because what you are doing is
+   looking for the same corner twice and that is easier side by side than in
+   two windows that scroll apart. */
+.mergescreen{position:absolute;inset:0;display:flex;flex-direction:column;
+  background:var(--bg);overflow:hidden}
+.mergehead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:12px calc(16px + var(--sa-r)) 10px calc(16px + var(--sa-l));
+  border-bottom:1px solid var(--line)}
+.mergehead h2{font-size:15px;font-weight:600;margin:0}
+.mergeacts{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.mergehint{margin:0;padding:8px 16px;font-size:12px;color:var(--ink-2);
+  border-bottom:1px solid var(--line);background:var(--sunk)}
+.mergebody{flex:1;display:flex;min-height:0}
+.mergeplan{flex:1;min-width:0;background:var(--vp-a);touch-action:none;
+  cursor:grab}
+.mergeplan:active{cursor:grabbing}
+.mdot{cursor:pointer}
+.mdot:hover{stroke:#C99B3F;stroke-width:2}
+.mline{cursor:pointer;stroke-linecap:round}
+.mline:hover{stroke:#C99B3F;stroke-opacity:1}
+.mergeside{width:300px;flex:0 0 300px;border-left:1px solid var(--line);
+  padding:12px 14px calc(16px + var(--sa-b));overflow:auto;background:var(--panel)}
+.mergeside h4{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);margin:14px 0 7px}
+.mergeside h4:first-child{margin-top:0}
+.mroom{display:flex;align-items:center;gap:9px;padding:6px 0;
+  border-bottom:1px solid var(--line)}
+.mroom i{width:9px;height:9px;border-radius:3px;flex:0 0 auto}
+.mroom div{min-width:0;flex:1}
+.mroom b{display:block;font-size:12.5px;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mroom .quiet{display:block;font-size:10.5px}
+.mroom.loose b{color:var(--ink-3)}
+.mpair{display:flex;align-items:center;gap:6px;font-size:11px;
+  font-family:var(--mono);padding:4px 0;border-bottom:1px solid var(--line)}
+.mpair span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpair span:first-child,.mpair span:nth-child(3){flex:1}
+.mpair .btn{margin-left:auto;padding:2px 8px}
+
+@media (max-width:1100px){
+  .mergebody{flex-direction:column}
+  .mergeside{width:auto;flex:0 0 auto;max-height:42%;border-left:0;
+    border-top:1px solid var(--line)}
+  .mergeplan{flex:1 1 auto;min-height:0}
+}

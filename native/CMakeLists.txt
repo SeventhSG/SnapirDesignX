@@ -27,6 +27,7 @@ set(CORE_SOURCES
   src/parser.cpp
   src/elements.cpp
   src/importx.cpp
+  src/merge.cpp
 )
 
 if(SNAPIR_WITH_OCCT)

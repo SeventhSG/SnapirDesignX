@@ -207,6 +207,8 @@ void Store::load() {
     if (p_json.contains("connections"))
       for (const auto& c : p_json["connections"])
         rec.connections.push_back(connection_from_json(c));
+    rec.merge_pairs = get_or(p_json, "merge_pairs", std::vector<Json>{});
+    rec.merge_anchor = get_opt<std::string>(p_json, "merge_anchor");
 
     projects_[rec.id] = std::move(rec);
   }
@@ -229,6 +231,9 @@ void Store::save() const {
     for (const auto& ov : p.overrides) j["overrides"][ov.first] = to_json(ov.second);
     j["connections"] = Json::array();
     for (const auto& c : p.connections) j["connections"].push_back(to_json(c));
+    j["merge_pairs"] = p.merge_pairs;
+    if (p.merge_anchor) j["merge_anchor"] = *p.merge_anchor;
+    else j["merge_anchor"] = nullptr;
     payload["projects"][kv.first] = j;
   }
 

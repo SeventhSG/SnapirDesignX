@@ -39,6 +39,7 @@
 #include "snapir/service.hpp"
 #include "snapir/geometry.hpp"
 #include "snapir/importx.hpp"
+#include "snapir/merge.hpp"
 #include "snapir/parser.hpp"
 #include "snapir/settings.hpp"
 #include "snapir/solid.hpp"
@@ -50,7 +51,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.4.0";
+constexpr const char* kVersion = "1.4.1";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -524,6 +525,84 @@ Room room_or_throw(const std::string& pid, const std::string& name) {
   const auto it = rooms.find(name);
   if (it == rooms.end()) throw std::out_of_range("No room named " + name);
   return apply_overrides(pid, it->second);
+}
+
+MergePair pair_from_json(const Json& d) {
+  return MergePair{d.value("roomA", std::string()), d.value("pointA", std::string()),
+                   d.value("roomB", std::string()), d.value("pointB", std::string())};
+}
+
+// Every room of a project, with the operator's decisions already layered on.
+std::map<std::string, Room> merged_rooms(const std::string& pid) {
+  std::map<std::string, Room> out;
+  for (const auto& kv : load_rooms(pid)) out.emplace(kv.first, apply_overrides(pid, kv.second));
+  return out;
+}
+
+// What the merge screen reads: where every room ended up, and on what.
+Json merge_json(const std::string& pid) {
+  const ProjectRecord& proj = g_store->get(pid);
+  const auto rooms = merged_rooms(pid);
+  std::vector<MergePair> pairs;
+  for (const auto& d : proj.merge_pairs) pairs.push_back(pair_from_json(d));
+  const MergeResult now = solve_merge(
+      rooms, pairs, proj.merge_anchor ? *proj.merge_anchor : std::string());
+
+  Json j;
+  j["anchor"] = nullptr;
+  for (const auto& kv : now.placed)
+    if (kv.second.via.empty()) j["anchor"] = kv.first;
+  j["unplaced"] = now.unplaced;
+
+  Json out_pairs = Json::array();
+  for (size_t i = 0; i < pairs.size(); ++i)
+    out_pairs.push_back(Json{{"roomA", pairs[i].room_a},
+                             {"pointA", pairs[i].point_a},
+                             {"roomB", pairs[i].room_b},
+                             {"pointB", pairs[i].point_b},
+                             {"index", static_cast<int>(i)}});
+  j["pairs"] = out_pairs;
+
+  Json out_rooms = Json::array();
+  for (const auto& kv : rooms) {
+    const auto it = now.placed.find(kv.first);
+    const bool set = it != now.placed.end();
+    Json r;
+    r["name"] = kv.first;
+    r["placed"] = set;
+    if (set) {
+      r["dx"] = round_to(it->second.dx, 3);
+      r["dy"] = round_to(it->second.dy, 3);
+      r["dz"] = round_to(it->second.dz, 3);
+      r["rotationDeg"] = round_to(it->second.rotation_deg, 4);
+      r["residual"] = round_to(it->second.residual, 2);
+      r["via"] = it->second.via;
+      r["pairs"] = it->second.pairs;
+    } else {
+      r["dx"] = nullptr; r["dy"] = nullptr; r["dz"] = nullptr;
+      r["rotationDeg"] = nullptr; r["residual"] = nullptr;
+      r["via"] = "";
+      r["pairs"] = 0;
+    }
+    // The plan, in the room's own frame. The app places it; sending it placed
+    // would mean re-sending every room on every pair.
+    Json outline = Json::array();
+    for (const auto& q : kv.second.outline)
+      outline.push_back(Json::array({q.x, q.y, q.z}));
+    r["outline"] = outline;
+    Json pts = Json::array();
+    for (const auto& q : kv.second.points)
+      pts.push_back(Json{{"name", q.name}, {"x", q.x}, {"y", q.y}, {"z", q.z},
+                         {"role", to_string(q.role)}});
+    r["points"] = pts;
+    Json segs = Json::array();
+    for (const auto& s : kv.second.segments)
+      segs.push_back(Json::array({s.first, s.second}));
+    r["segments"] = segs;
+    out_rooms.push_back(r);
+  }
+  j["rooms"] = out_rooms;
+  return j;
 }
 
 Json room_json(const Room& room, const RoomOverride* ov,
@@ -1310,6 +1389,187 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                ok_json(res, Json{{"path", path},
                                  {"bytes", file_size_of(path)},
                                  {"format", fmt}});
+             } catch (const std::out_of_range& e) {
+               fail(res, 404, e.what());
+             } catch (const std::exception& e) {
+               fail(res, 422, e.what());
+             }
+           });
+
+  // ---------------------------------------------------------------- merge
+  //
+  // Every room is measured from wherever the instrument stood, so a survey is a
+  // dozen drawings each in its own frame. The operator says which corner in one
+  // room is which corner in another, and that is enough to solve where each
+  // room sits relative to the rest. Nothing is guessed and nothing is stored
+  // but the pairs themselves: the placements are worked out from them on every
+  // read, so a pair deleted never leaves a stale transform behind it.
+
+  svr.Get(R"(/projects/([^/]+)/merge)",
+          [&](const httplib::Request& req, httplib::Response& res) {
+            std::lock_guard<std::mutex> guard(g_lock);
+            try {
+              ok_json(res, merge_json(req.matches[1]));
+            } catch (const std::out_of_range& e) {
+              fail(res, 404, e.what());
+            } catch (const std::exception& e) {
+              fail(res, 422, e.what());
+            }
+          });
+
+  svr.Post(R"(/projects/([^/]+)/merge/pairs)",
+           [&](const httplib::Request& req, httplib::Response& res) {
+             std::lock_guard<std::mutex> guard(g_lock);
+             const std::string pid = req.matches[1];
+             try {
+               const Json b = Json::parse(req.body.empty() ? "{}" : req.body);
+               const std::string room_a = b.value("roomA", std::string());
+               const std::string room_b = b.value("roomB", std::string());
+               const auto rooms = merged_rooms(pid);
+               if (!rooms.count(room_a) || !rooms.count(room_b)) {
+                 fail(res, 404, "No such room in this project");
+                 return;
+               }
+               if (room_a == room_b) {
+                 fail(res, 422, "A room cannot be matched against itself.");
+                 return;
+               }
+
+               ProjectRecord& proj = store.get(pid);
+               std::vector<MergePair> pairs;
+               for (const auto& d : proj.merge_pairs) pairs.push_back(pair_from_json(d));
+               const MergeResult now = solve_merge(
+                   rooms, pairs,
+                   proj.merge_anchor ? *proj.merge_anchor : std::string());
+
+               std::vector<MergePair> fresh;
+               if (b.contains("lineA") && b.contains("lineB") &&
+                   b["lineA"].is_array() && b["lineB"].is_array()) {
+                 const auto la = b["lineA"].get<std::vector<std::string>>();
+                 const auto lb = b["lineB"].get<std::vector<std::string>>();
+                 if (la.size() != 2 || lb.size() != 2) {
+                   fail(res, 422, "A line is two points.");
+                   return;
+                 }
+                 const auto ia = now.placed.find(room_a);
+                 const auto ib = now.placed.find(room_b);
+                 fresh = endpoints_for_lines(
+                     rooms.at(room_a), {la[0], la[1]}, rooms.at(room_b),
+                     {lb[0], lb[1]},
+                     ia == now.placed.end() ? nullptr : &ia->second,
+                     ib == now.placed.end() ? nullptr : &ib->second);
+                 if (fresh.empty()) {
+                   fail(res, 422, "Those lines are not in those rooms.");
+                   return;
+                 }
+               } else {
+                 const std::string pa = b.value("pointA", std::string());
+                 const std::string pb = b.value("pointB", std::string());
+                 if (pa.empty() || pb.empty()) {
+                   fail(res, 422, "Pick a point in each room.");
+                   return;
+                 }
+                 fresh.push_back(MergePair{room_a, pa, room_b, pb});
+               }
+
+               std::set<std::array<std::string, 4>> have;
+               for (const auto& q : pairs) have.insert(q.key());
+               for (const auto& q : fresh)
+                 if (have.insert(q.key()).second)
+                   proj.merge_pairs.push_back(Json{{"roomA", q.room_a},
+                                                   {"pointA", q.point_a},
+                                                   {"roomB", q.room_b},
+                                                   {"pointB", q.point_b}});
+               store.save();
+               ok_json(res, merge_json(pid));
+             } catch (const std::out_of_range& e) {
+               fail(res, 404, e.what());
+             } catch (const std::exception& e) {
+               fail(res, 422, e.what());
+             }
+           });
+
+  svr.Delete(R"(/projects/([^/]+)/merge/pairs/([0-9]+))",
+             [&](const httplib::Request& req, httplib::Response& res) {
+               std::lock_guard<std::mutex> guard(g_lock);
+               const std::string pid = req.matches[1];
+               try {
+                 ProjectRecord& proj = store.get(pid);
+                 const size_t i = std::stoul(req.matches[2].str());
+                 if (i >= proj.merge_pairs.size()) {
+                   fail(res, 404, "No such pair");
+                   return;
+                 }
+                 proj.merge_pairs.erase(proj.merge_pairs.begin() +
+                                        static_cast<long>(i));
+                 store.save();
+                 ok_json(res, merge_json(pid));
+               } catch (const std::out_of_range& e) {
+                 fail(res, 404, e.what());
+               } catch (const std::exception& e) {
+                 fail(res, 422, e.what());
+               }
+             });
+
+  svr.Patch(R"(/projects/([^/]+)/merge)",
+            [&](const httplib::Request& req, httplib::Response& res) {
+              std::lock_guard<std::mutex> guard(g_lock);
+              const std::string pid = req.matches[1];
+              try {
+                const Json b = Json::parse(req.body.empty() ? "{}" : req.body);
+                ProjectRecord& proj = store.get(pid);
+                if (b.value("clear", false)) {
+                  proj.merge_pairs.clear();
+                  proj.merge_anchor.reset();
+                }
+                if (b.contains("anchor")) {
+                  const std::string a = b["anchor"].is_string()
+                                            ? b["anchor"].get<std::string>()
+                                            : std::string();
+                  if (a.empty()) proj.merge_anchor.reset();
+                  else proj.merge_anchor = a;
+                }
+                store.save();
+                ok_json(res, merge_json(pid));
+              } catch (const std::out_of_range& e) {
+                fail(res, 404, e.what());
+              } catch (const std::exception& e) {
+                fail(res, 422, e.what());
+              }
+            });
+
+  // Every placed room, in one frame, in one file.
+  svr.Post(R"(/projects/([^/]+)/merge/export)",
+           [&](const httplib::Request& req, httplib::Response& res) {
+             std::lock_guard<std::mutex> guard(g_lock);
+             const std::string pid = req.matches[1];
+             try {
+               const ProjectRecord& proj = store.get(pid);
+               const BuildSettings cfg = settings_for(pid);
+               const std::string fmt = url_param(req, "fmt", "step");
+               const auto rooms = merged_rooms(pid);
+               std::vector<MergePair> pairs;
+               for (const auto& d : proj.merge_pairs) pairs.push_back(pair_from_json(d));
+               const MergeResult now = solve_merge(
+                   rooms, pairs,
+                   proj.merge_anchor ? *proj.merge_anchor : std::string());
+               if (now.placed.size() < 2) {
+                 fail(res, 422, "Match at least two rooms before merging.");
+                 return;
+               }
+               const MergedBody body = build_merged(rooms, now.placed, cfg);
+               const fs::path out = fs::u8path(proj.folder) / "Snapir STEP";
+               const std::string path = export_shape(
+                   body.shape,
+                   (out / fs::u8path(proj.name + " - merged")).u8string(), fmt,
+                   cfg.step_schema);
+               ok_json(res, Json{{"path", path},
+                                 {"bytes", file_size_of(path)},
+                                 {"format", fmt},
+                                 {"rooms", now.placed.size()},
+                                 {"how", body.how},
+                                 {"failed", body.failed},
+                                 {"unplaced", now.unplaced}});
              } catch (const std::out_of_range& e) {
                fail(res, 404, e.what());
              } catch (const std::exception& e) {

@@ -77,6 +77,12 @@ class ProjectRecord:
     # reference implementation carries them through untouched so that opening
     # a store the app wrote, and writing it back, never destroys them.
     connections: list[dict] = field(default_factory=list)
+    # Sketch merge: the operator's own "this corner is that corner" pairs, and
+    # which room is the frame everything else comes to. The placements are not
+    # stored - they are solved from these every time, so a pair added or
+    # deleted never leaves a stale transform behind it.
+    merge_pairs: list[dict] = field(default_factory=list)
+    merge_anchor: str | None = None
     # Anything a newer core wrote that this implementation has no field for.
     # Never interpreted, always written back.
     extra: dict = field(default_factory=dict, repr=False, compare=False)

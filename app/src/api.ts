@@ -88,6 +88,35 @@ export interface Connection {
   dx: number; dy: number; rotationDeg: number; enabled: boolean;
 }
 
+/** One room in the merge, in its own frame, plus where that frame sits. */
+export interface MergeRoom {
+  name: string;
+  placed: boolean;
+  dx: number | null; dy: number | null; dz: number | null;
+  rotationDeg: number | null;
+  /** How far the paired points ended up apart, RMS centimetres. */
+  residual: number | null;
+  /** The room this one was matched against. Empty for the anchor. */
+  via: string;
+  pairs: number;
+  outline: [number, number, number][];
+  points: { name: string; x: number; y: number; z: number; role: string }[];
+  segments: [string, string][];
+}
+
+export interface MergePair {
+  index: number;
+  roomA: string; pointA: string;
+  roomB: string; pointB: string;
+}
+
+export interface MergeState {
+  anchor: string | null;
+  unplaced: string[];
+  pairs: MergePair[];
+  rooms: MergeRoom[];
+}
+
 export interface FaceInfo {
   id: number; kind: string; area: number; role: string;
   normal: [number, number, number]; centroid: [number, number, number];
@@ -221,6 +250,25 @@ export const api = {
     }),
   deleteConnection: (id: string, cid: string) =>
     call<{ ok: boolean }>(`/projects/${id}/connections/${cid}`, { method: "DELETE" }),
+  /* ---- the sketch merger ----
+     Nothing but the pairs is stored; the placements come back solved from them
+     on every call, so a pair added or dropped can never leave a stale
+     transform behind it. */
+  merge: (id: string) => call<MergeState>(`/projects/${id}/merge`),
+  addMergePair: (id: string, body: Record<string, unknown>) =>
+    call<MergeState>(`/projects/${id}/merge/pairs`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  dropMergePair: (id: string, index: number) =>
+    call<MergeState>(`/projects/${id}/merge/pairs/${index}`, { method: "DELETE" }),
+  patchMerge: (id: string, body: Record<string, unknown>) =>
+    call<MergeState>(`/projects/${id}/merge`, {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
+  exportMerge: (id: string) =>
+    call<{ path: string; bytes: number; rooms: number; how: string;
+           failed: string[]; unplaced: string[] }>(
+      `/projects/${id}/merge/export`, { method: "POST" }),
   settings: () => call<Record<string, unknown>>("/settings"),
   patchSettings: (body: Record<string, unknown>) =>
     call<Record<string, unknown>>("/settings", {

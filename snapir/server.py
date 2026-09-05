@@ -27,7 +27,7 @@ from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.4.0")
+app = FastAPI(title="Snapir Design X", version="1.4.1")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -617,6 +617,154 @@ def export_designx(pid: str, name: str, fmt: str = "iges"):
     except BuildError as e:
         raise HTTPException(422, str(e))
     return {"path": str(path), "bytes": Path(path).stat().st_size}
+
+
+# ---------------------------------------------------------------- the merge
+#
+# Every room is measured from wherever the instrument stood, so a survey is a
+# dozen drawings each in its own frame. The operator says which corner in one
+# room is which corner in another, and that is enough to solve where each room
+# sits relative to the rest. Nothing is guessed and nothing is stored but the
+# pairs themselves: the placements are worked out from them on every read, so a
+# pair deleted never leaves a stale transform behind it.
+
+
+def _merge_state(pid: str):
+    from .merge import Pair, solve
+
+    proj = store.get(pid)
+    rooms = {name: _apply_overrides(pid, room) for name, room in _load(pid).items()}
+    pairs = [Pair.from_json(d) for d in proj.merge_pairs]
+    placed, loose = solve(rooms, pairs, proj.merge_anchor)
+    return proj, rooms, pairs, placed, loose
+
+
+def _merge_json(pid: str) -> dict:
+    proj, rooms, pairs, placed, loose = _merge_state(pid)
+    anchor = next((n for n, p in placed.items() if not p.via), None)
+    return {
+        "anchor": anchor,
+        "unplaced": loose,
+        "pairs": [{**p.to_json(), "index": i} for i, p in enumerate(pairs)],
+        "rooms": [
+            {
+                "name": name,
+                "placed": name in placed,
+                "dx": round(placed[name].dx, 3) if name in placed else None,
+                "dy": round(placed[name].dy, 3) if name in placed else None,
+                "dz": round(placed[name].dz, 3) if name in placed else None,
+                "rotationDeg": round(placed[name].rotation_deg, 4)
+                if name in placed else None,
+                "residual": round(placed[name].residual, 2) if name in placed else None,
+                "via": placed[name].via if name in placed else "",
+                "pairs": placed[name].pairs if name in placed else 0,
+                # The plan, in the room's own frame. The app places it; sending
+                # it placed would mean re-sending every room on every pair.
+                "outline": [[p.x, p.y, p.z] for p in room.outline],
+                "points": [{"name": p.name, "x": p.x, "y": p.y, "z": p.z,
+                            "role": p.role.value} for p in room.points],
+                "segments": [list(s) for s in room.segments],
+            }
+            for name, room in rooms.items()
+        ],
+    }
+
+
+@app.get("/projects/{pid}/merge")
+def get_merge(pid: str):
+    return _merge_json(pid)
+
+
+class MergePair(BaseModel):
+    roomA: str
+    pointA: str | None = None
+    roomB: str
+    pointB: str | None = None
+    # Two lines said to be the same wall, as [start, end] in each room. Which
+    # end answers to which is worked out here rather than asked for.
+    lineA: list[str] | None = None
+    lineB: list[str] | None = None
+
+
+@app.post("/projects/{pid}/merge/pairs")
+def add_merge_pair(pid: str, body: MergePair):
+    from .merge import Pair, endpoints_for_lines
+
+    proj, rooms, pairs, placed, _loose = _merge_state(pid)
+    if body.roomA not in rooms or body.roomB not in rooms:
+        raise HTTPException(404, "No such room in this project")
+    if body.roomA == body.roomB:
+        raise HTTPException(422, "A room cannot be matched against itself.")
+
+    if body.lineA and body.lineB:
+        if len(body.lineA) != 2 or len(body.lineB) != 2:
+            raise HTTPException(422, "A line is two points.")
+        fresh = endpoints_for_lines(
+            rooms[body.roomA], (body.lineA[0], body.lineA[1]),
+            rooms[body.roomB], (body.lineB[0], body.lineB[1]),
+            placed.get(body.roomA), placed.get(body.roomB))
+        if not fresh:
+            raise HTTPException(422, "Those lines are not in those rooms.")
+    else:
+        if not body.pointA or not body.pointB:
+            raise HTTPException(422, "Pick a point in each room.")
+        fresh = [Pair(body.roomA, body.pointA, body.roomB, body.pointB)]
+
+    have = {p.key for p in pairs}
+    for pair in fresh:
+        if pair.key not in have:
+            proj.merge_pairs.append(pair.to_json())
+            have.add(pair.key)
+    store.save()
+    return _merge_json(pid)
+
+
+@app.delete("/projects/{pid}/merge/pairs/{index}")
+def drop_merge_pair(pid: str, index: int):
+    proj = store.get(pid)
+    if not 0 <= index < len(proj.merge_pairs):
+        raise HTTPException(404, "No such pair")
+    proj.merge_pairs.pop(index)
+    store.save()
+    return _merge_json(pid)
+
+
+class MergePatch(BaseModel):
+    anchor: str | None = None
+    clear: bool = False
+
+
+@app.patch("/projects/{pid}/merge")
+def patch_merge(pid: str, body: MergePatch):
+    proj = store.get(pid)
+    if body.clear:
+        proj.merge_pairs = []
+        proj.merge_anchor = None
+    if body.anchor is not None:
+        proj.merge_anchor = body.anchor or None
+    store.save()
+    return _merge_json(pid)
+
+
+@app.post("/projects/{pid}/merge/export")
+def export_merge(pid: str):
+    """Every placed room, in one frame, in one file."""
+    from .merge import build_merged
+
+    proj, rooms, _pairs, placed, loose = _merge_state(pid)
+    if len(placed) < 2:
+        raise HTTPException(422, "Match at least two rooms before merging.")
+    cfg = _settings(pid)
+    try:
+        shape, failed, how = _quiet(build_merged, rooms, placed, cfg)
+        out = Path(proj.folder) / "Snapir STEP"
+        path = _quiet(export_step, shape, out / f"{proj.name} - merged.step",
+                      cfg.step_schema)
+    except BuildError as e:
+        raise HTTPException(422, str(e))
+    return {"path": str(path), "bytes": Path(path).stat().st_size,
+            "rooms": len(placed), "how": how, "failed": failed,
+            "unplaced": loose}
 
 
 class SketchImport(BaseModel):
