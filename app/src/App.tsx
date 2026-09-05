@@ -1375,6 +1375,32 @@ export default function App() {
                     )}
                   </div>
                 )}
+                {inSketch && edit === "outline" && (
+                  <div className="sketchbar">
+                    <span className="num">{ring.length}</span>
+                    <span>{T("sketchPoints")}</span>
+                    <button className="btn q sm" disabled={ring.length === 0}
+                            onClick={() => { setRing([]); setPending(null);
+                                             say(T("outlineWiped")); }}>
+                      {T("sketchWipe")}</button>
+                    <button className="btn q sm" onClick={() => setRing(room.outline)}>
+                      {T("sketchReset")}</button>
+                    {/* The ring applies itself as it is drawn; this is for
+                        when you would rather not wait out the pause. */}
+                    <button className="btn sm" disabled={ring.length < 3}
+                            onClick={async () => {
+                              applied.current = ring.join("|");
+                              await patch({ outlineOrder: ring }, true);
+                              say(T("outlineApplied"));
+                            }}>
+                      {T("sketchApply")}</button>
+                  </div>
+                )}
+
+                {/* One row, wrapping. Two bars pinned to opposite corners
+                    collided the moment either of them grew: at 1324 px the
+                    door group was sitting on top of Back. */}
+                <div className="bar">
                 <div className="tools">
                   <div className="seg quiet">
                     <button aria-pressed={tool === "face"}
@@ -1466,6 +1492,7 @@ export default function App() {
                   <button className="btn sm" onClick={doExport} disabled={!result || busy}>
                     {T("exportRoom")}</button>
                 </div>
+                </div>
               </div>
 
               {doorsOpen && room && (
@@ -1531,26 +1558,6 @@ export default function App() {
                 </>
               )}
 
-              {inSketch && edit === "outline" && (
-                <div className="sketchbar">
-                  <span className="num">{ring.length}</span>
-                  <span>{T("sketchPoints")}</span>
-                  <button className="btn q sm" disabled={ring.length === 0}
-                          onClick={() => { setRing([]); setPending(null); say(T("outlineWiped")); }}>
-                    {T("sketchWipe")}</button>
-                  <button className="btn q sm" onClick={() => setRing(room.outline)}>
-                    {T("sketchReset")}</button>
-                  {/* The ring applies itself as it is drawn; this is for
-                      when you would rather not wait out the pause. */}
-                  <button className="btn sm" disabled={ring.length < 3}
-                          onClick={async () => {
-                            applied.current = ring.join("|");
-                            await patch({ outlineOrder: ring }, true);
-                            say(T("outlineApplied"));
-                          }}>
-                    {T("sketchApply")}</button>
-                </div>
-              )}
               {busy && <div className="busy">{T("building")}…</div>}
             </div>
 
