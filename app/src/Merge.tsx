@@ -157,6 +157,18 @@ export default function Merge({
     finally { setBusy(false); }
   };
 
+  /* Two matches on a short baseline fix a heading out of a couple of
+     centimetres of difference between two readings, and a corner matched to
+     the wrong corner fixes it out of nothing. Either way the room lands
+     attached and facing the wrong way, and the solver cannot say so - by its
+     own measure it is the best answer there is. So the operator says. */
+  const turn = async (name: string, by: number) => {
+    setBusy(true);
+    try { setState(await api.patchMerge(projectId, { turn: { room: name, by } })); }
+    catch (e) { onSay((e as Error).message, true); }
+    finally { setBusy(false); }
+  };
+
   const setAnchor = async (name: string) => {
     setBusy(true);
     try { setState(await api.patchMerge(projectId, { anchor: name })); }
@@ -230,10 +242,19 @@ export default function Merge({
                       : T("mergeUnplaced")}
                 </span>
               </div>
-              {r.name !== state.anchor && (
-                <button className="btn q sm" disabled={busy}
-                        onClick={() => setAnchor(r.name)}>{T("mergeSetAnchor")}</button>
-              )}
+              <div className="mturn">
+                {/* A quarter turn either way, about the match, so the room
+                    swings round the corner it was pinned by. */}
+                <button className="btn q sm" disabled={busy} title={T("mergeTurnHelp")}
+                        onClick={() => turn(r.name, -1)}>↺</button>
+                {r.turn > 0 && <span className="num">{r.turn * 90}°</span>}
+                <button className="btn q sm" disabled={busy} title={T("mergeTurnHelp")}
+                        onClick={() => turn(r.name, 1)}>↻</button>
+                {r.name !== state.anchor && (
+                  <button className="btn q sm" disabled={busy}
+                          onClick={() => setAnchor(r.name)}>{T("mergeSetAnchor")}</button>
+                )}
+              </div>
             </div>
           ))}
 

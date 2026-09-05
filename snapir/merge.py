@@ -114,8 +114,47 @@ def _fit(src: list[tuple[float, float, float]],
     return place
 
 
+def turn_about(place: Placement, quarters: int,
+               pivot: tuple[float, float]) -> Placement:
+    """The same placement, given a quarter turn about a point that stays put.
+
+    Two matches on a short baseline fix a room's heading out of a few
+    centimetres of difference between two readings, and a corner matched to the
+    wrong corner fixes it out of nothing at all. Either way the room lands
+    attached in the right place and facing the wrong way, and no amount of
+    solving will say so, because by its own measure the answer is the best one
+    there is.
+
+    So this is the operator's, not the solver's. It turns about the match
+    itself, which is the one place that must not move: the room swings round
+    the corner it was pinned by and everything measured against it follows.
+    """
+    k = quarters % 4
+    if not k:
+        return place
+    rad = math.radians(90.0 * k)
+    cos, sin = math.cos(rad), math.sin(rad)
+    tx, ty = place.dx - pivot[0], place.dy - pivot[1]
+    out = Placement(
+        dx=tx * cos - ty * sin + pivot[0],
+        dy=tx * sin + ty * cos + pivot[1],
+        dz=place.dz,
+        rotation_deg=place.rotation_deg + 90.0 * k,
+        residual=place.residual,
+        via=place.via,
+        pairs=place.pairs,
+    )
+    # Normalised so the number the operator reads back is the one they set.
+    while out.rotation_deg > 180.0:
+        out.rotation_deg -= 360.0
+    while out.rotation_deg <= -180.0:
+        out.rotation_deg += 360.0
+    return out
+
+
 def solve(rooms: dict[str, Room], pairs: list[Pair],
-          anchor: str | None = None) -> tuple[dict[str, Placement], list[str]]:
+          anchor: str | None = None,
+          turns: dict[str, int] | None = None) -> tuple[dict[str, Placement], list[str]]:
     """Place every room the pairs can reach, and name the ones they cannot.
 
     The anchor is the frame: it sits where it was surveyed and everything else
@@ -138,7 +177,24 @@ def solve(rooms: dict[str, Room], pairs: list[Pair],
         anchor = max(known, key=lambda n: (count.get(n, 0), n)) if count else \
             next(iter(known))
 
-    placed: dict[str, Placement] = {anchor: Placement()}
+    turns = turns or {}
+
+    def spun(name: str, place: Placement,
+             pivot: tuple[float, float] | None) -> Placement:
+        """A room's placement with the operator's own quarter turns on it."""
+        k = int(turns.get(name, 0))
+        if not k:
+            return place
+        if pivot is None:
+            room = known[name]
+            pts = room.outline or room.points
+            if not pts:
+                return place
+            at = [place.apply(q.x, q.y, q.z) for q in pts]
+            pivot = (sum(a[0] for a in at) / len(at), sum(a[1] for a in at) / len(at))
+        return turn_about(place, k, pivot)
+
+    placed: dict[str, Placement] = {anchor: spun(anchor, Placement(), None)}
     points = {name: {p.name: p for p in room.points} for name, room in known.items()}
 
     while True:
@@ -167,6 +223,11 @@ def solve(rooms: dict[str, Room], pairs: list[Pair],
                 continue
             place = _fit(src, dst)
             place.via = via
+            # About the match, so the room swings round the corner it was
+            # pinned by rather than wandering off it.
+            place = spun(name, place,
+                         (sum(d[0] for d in dst) / len(dst),
+                          sum(d[1] for d in dst) / len(dst)))
             # The best-fitting room goes down first: placing a shaky one early
             # makes every room measured against it shaky too.
             if best is None or (len(src), -place.residual) > \

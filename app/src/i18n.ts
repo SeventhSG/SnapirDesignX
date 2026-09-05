@@ -44,6 +44,10 @@ const en = {
   mergeNoPairs: "Nothing matched yet. Two matches fix a room; one only shifts it.",
   mergeAnchor: "the frame",
   mergeSetAnchor: "Use as frame",
+  mergeTurnHelp: "Turn this room a quarter turn about the corners it was "
+    + "matched by. Two matches close together fix a heading out of very "
+    + "little, and can fix it the wrong way round; the solver has no way to "
+    + "tell, so this is where you say.",
   mergeVia: "via",
   mergeUnplaced: "not matched to anything yet",
   mergeFit: "Fit",
@@ -224,6 +228,9 @@ const tr: Record<keyof typeof en, string> = {
     + "bir tanesi sadece kaydırır.",
   mergeAnchor: "temel alınan",
   mergeSetAnchor: "Temel al",
+  mergeTurnHelp: "Bu odayı eşleştiği köşelerin etrafında çeyrek tur çevirir. "
+    + "Birbirine yakın iki eşleşme yönü çok az veriden bulur ve ters "
+    + "bulabilir; çözücü bunu anlayamaz, o yüzden burada sen söylersin.",
   mergeVia: "üzerinden",
   mergeUnplaced: "henüz hiçbir şeyle eşleşmedi",
   mergeFit: "Sığdır",

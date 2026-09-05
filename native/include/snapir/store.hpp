@@ -92,6 +92,10 @@ struct ProjectRecord {
   // never leaves a stale transform behind it.
   std::vector<Json> merge_pairs;
   std::optional<std::string> merge_anchor;
+  // Quarter turns the operator put on a room, name -> 0..3. Two matches on a
+  // short baseline fix a heading out of a couple of centimetres and can fix it
+  // wrong; the solver cannot tell, so this is where the operator says.
+  std::map<std::string, int> merge_turns;
 
   void touch() { opened_at = now_iso8601(); }
 };

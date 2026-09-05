@@ -99,6 +99,8 @@ export interface MergeRoom {
   /** The room this one was matched against. Empty for the anchor. */
   via: string;
   pairs: number;
+  /** Quarter turns the operator put on this room, 0..3. */
+  turn: number;
   outline: [number, number, number][];
   points: { name: string; x: number; y: number; z: number; role: string }[];
   segments: [string, string][];

@@ -57,10 +57,23 @@ struct MergeResult {
   std::vector<std::string> unplaced;   // sorted
 };
 
+// The same placement, given a quarter turn about a point that stays put.
+//
+// Two matches on a short baseline fix a room's heading out of a few
+// centimetres of difference between two readings, and a corner matched to the
+// wrong corner fixes it out of nothing at all. Either way the room lands
+// attached in the right place and facing the wrong way, and no amount of
+// solving will say so, because by its own measure the answer is the best one
+// there is. So this is the operator's, not the solver's: it turns about the
+// match itself, which is the one place that must not move.
+Placement turn_about(const Placement& place, int quarters,
+                     double pivot_x, double pivot_y);
+
 // Place every room the pairs can reach, and name the ones they cannot.
 MergeResult solve_merge(const std::map<std::string, Room>& rooms,
                         const std::vector<MergePair>& pairs,
-                        const std::string& anchor);
+                        const std::string& anchor,
+                        const std::map<std::string, int>& turns = {});
 
 // Two pairs from two lines said to be the same wall. Which end answers to
 // which is worked out here rather than asked for.

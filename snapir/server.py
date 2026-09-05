@@ -27,7 +27,7 @@ from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.4.2")
+app = FastAPI(title="Snapir Design X", version="1.4.3")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -635,7 +635,7 @@ def _merge_state(pid: str):
     proj = store.get(pid)
     rooms = {name: _apply_overrides(pid, room) for name, room in _load(pid).items()}
     pairs = [Pair.from_json(d) for d in proj.merge_pairs]
-    placed, loose = solve(rooms, pairs, proj.merge_anchor)
+    placed, loose = solve(rooms, pairs, proj.merge_anchor, proj.merge_turns)
     return proj, rooms, pairs, placed, loose
 
 
@@ -657,6 +657,7 @@ def _merge_json(pid: str) -> dict:
                 if name in placed else None,
                 "residual": round(placed[name].residual, 2) if name in placed else None,
                 "via": placed[name].via if name in placed else "",
+                "turn": int(proj.merge_turns.get(name, 0)) % 4,
                 "pairs": placed[name].pairs if name in placed else 0,
                 # The plan, in the room's own frame. The app places it; sending
                 # it placed would mean re-sending every room on every pair.
@@ -732,6 +733,8 @@ def drop_merge_pair(pid: str, index: int):
 class MergePatch(BaseModel):
     anchor: str | None = None
     clear: bool = False
+    # A quarter turn on one room: {"room": "Kat 1", "by": 1} or {"by": -1}.
+    turn: dict | None = None
 
 
 @app.patch("/projects/{pid}/merge")
@@ -742,6 +745,17 @@ def patch_merge(pid: str, body: MergePatch):
         proj.merge_anchor = None
     if body.anchor is not None:
         proj.merge_anchor = body.anchor or None
+    if body.turn:
+        room = str(body.turn.get("room", ""))
+        if room:
+            by = int(body.turn.get("by", 1))
+            now = (int(proj.merge_turns.get(room, 0)) + by) % 4
+            if now:
+                proj.merge_turns[room] = now
+            else:
+                proj.merge_turns.pop(room, None)
+    if body.clear:
+        proj.merge_turns = {}
     store.save()
     return _merge_json(pid)
 

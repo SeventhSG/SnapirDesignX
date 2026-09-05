@@ -100,9 +100,27 @@ std::array<std::string, 4> MergePair::key() const {
   return {lo.first, lo.second, hi.first, hi.second};
 }
 
+Placement turn_about(const Placement& place, int quarters, double px, double py) {
+  const int k = ((quarters % 4) + 4) % 4;
+  if (!k) return place;
+  const double rad = 90.0 * k * kDegToRad;
+  const double cos = std::cos(rad), sin = std::sin(rad);
+  const double tx = place.dx - px, ty = place.dy - py;
+
+  Placement out = place;
+  out.dx = tx * cos - ty * sin + px;
+  out.dy = tx * sin + ty * cos + py;
+  out.rotation_deg = place.rotation_deg + 90.0 * k;
+  // Normalised so the number the operator reads back is the one they set.
+  while (out.rotation_deg > 180.0) out.rotation_deg -= 360.0;
+  while (out.rotation_deg <= -180.0) out.rotation_deg += 360.0;
+  return out;
+}
+
 MergeResult solve_merge(const std::map<std::string, Room>& rooms,
                         const std::vector<MergePair>& pairs,
-                        const std::string& anchor_in) {
+                        const std::string& anchor_in,
+                        const std::map<std::string, int>& turns) {
   MergeResult out;
   if (rooms.empty()) return out;
 
@@ -122,7 +140,30 @@ MergeResult solve_merge(const std::map<std::string, Room>& rooms,
       if (c > best) { best = c; anchor = kv.first; }
     }
   }
-  out.placed[anchor] = Placement();
+  // A room's placement with the operator's own quarter turns on it. The
+  // anchor has no match to turn about, so it turns about itself.
+  const auto spun = [&](const std::string& name, const Placement& place,
+                        const double* px, const double* py) {
+    const auto it = turns.find(name);
+    if (it == turns.end() || it->second % 4 == 0) return place;
+    if (px && py) return turn_about(place, it->second, *px, *py);
+    const auto room = rooms.find(name);
+    if (room == rooms.end()) return place;
+    const auto& pts = room->second.outline.empty() ? room->second.points
+                                                   : room->second.outline;
+    if (pts.empty()) return place;
+    double cx = 0, cy = 0;
+    for (const auto& q : pts) {
+      const Triple at = place.apply(q.x, q.y, q.z);
+      cx += at[0];
+      cy += at[1];
+    }
+    cx /= static_cast<double>(pts.size());
+    cy /= static_cast<double>(pts.size());
+    return turn_about(place, it->second, cx, cy);
+  };
+
+  out.placed[anchor] = spun(anchor, Placement(), nullptr, nullptr);
 
   // Rooms are placed outward from the anchor, each against whatever is already
   // placed, so a room matched only to a room matched only to the anchor still
@@ -161,6 +202,13 @@ MergeResult solve_merge(const std::map<std::string, Room>& rooms,
 
       Placement place = fit(src, dst);
       place.via = via;
+      // About the match, so the room swings round the corner it was pinned by
+      // rather than wandering off it.
+      double px = 0, py = 0;
+      for (const auto& d : dst) { px += d[0]; py += d[1]; }
+      px /= static_cast<double>(dst.size());
+      py /= static_cast<double>(dst.size());
+      place = spun(name, place, &px, &py);
       // The best-fitting room goes down first: placing a shaky one early makes
       // every room measured against it shaky too.
       if (!found || place.pairs > best.pairs ||

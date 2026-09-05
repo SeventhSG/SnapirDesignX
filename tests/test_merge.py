@@ -154,3 +154,64 @@ def test_the_whole_thing_builds_as_one_body():
     stats = solid_stats(shape)
     assert stats["volume_m3"] > 0
     assert how in ("fused", "side by side")
+
+
+def test_a_quarter_turn_swings_the_room_round_its_match():
+    # Two matches on a short baseline fix a heading out of a couple of
+    # centimetres, and a corner matched to the wrong corner fixes it out of
+    # nothing. Either way the room lands attached and facing the wrong way, and
+    # the solver cannot say so: by its own measure it is the best answer there
+    # is. The turn is the operator's, and it has to leave the match where it is.
+    a = _room("A")
+    b = _moved(a, "B", Placement(dx=500.0, dy=0.0))
+    pairs = [Pair("A", "P_001", "B", "P_001"), Pair("A", "P_002", "B", "P_002")]
+
+    plain, _ = solve({"A": a, "B": b}, pairs, anchor="A")
+    turned, _ = solve({"A": a, "B": b}, pairs, anchor="A", turns={"B": 1})
+
+    assert turned["B"].rotation_deg == pytest.approx(
+        plain["B"].rotation_deg + 90.0, abs=1e-9)
+    # The match itself has not moved: the room turns about the middle of the
+    # corners it was pinned by, so the pinning stays as good as it was.
+    pins = [q for q in b.points if q.name in ("P_001", "P_002")]
+    def mid(place):
+        at = [place.apply(q.x, q.y, q.z) for q in pins]
+        return (sum(p[0] for p in at) / 2, sum(p[1] for p in at) / 2)
+    assert mid(turned["B"]) == pytest.approx(mid(plain["B"]), abs=1e-6)
+    # And a corner away from the match has.
+    far = next(p for p in b.points if p.name == "P_003")
+    assert turned["B"].apply(far.x, far.y, far.z)[:2] != pytest.approx(
+        plain["B"].apply(far.x, far.y, far.z)[:2], abs=1.0)
+
+
+def test_four_quarter_turns_are_none():
+    a = _room("A")
+    b = _moved(a, "B", Placement(dx=500.0, dy=0.0))
+    pairs = [Pair("A", "P_001", "B", "P_001"), Pair("A", "P_002", "B", "P_002")]
+    plain, _ = solve({"A": a, "B": b}, pairs, anchor="A")
+    round_trip, _ = solve({"A": a, "B": b}, pairs, anchor="A", turns={"B": 4})
+    for p in b.points:
+        assert round_trip["B"].apply(p.x, p.y, p.z) == pytest.approx(
+            plain["B"].apply(p.x, p.y, p.z), abs=1e-6)
+
+
+def test_a_room_placed_through_a_turned_room_follows_it():
+    # C is measured against B. Turning B has to carry C with it, or the two
+    # come apart the moment the operator fixes B's heading.
+    a = _room("A")
+    b = _moved(a, "B", Placement(dx=500.0, dy=0.0))
+    c = _moved(a, "C", Placement(dx=-220.0, dy=610.0, rotation_deg=-45.0))
+    pairs = [Pair("A", "P_001", "B", "P_001"), Pair("A", "P_002", "B", "P_002"),
+             Pair("B", "P_003", "C", "P_003"), Pair("B", "P_004", "C", "P_004")]
+
+    plain, _ = solve({"A": a, "B": b, "C": c}, pairs, anchor="A")
+    turned, _ = solve({"A": a, "B": b, "C": c}, pairs, anchor="A", turns={"B": 1})
+    assert turned["C"].via == "B"
+    # B's own corner and C's twin of it still coincide after the turn.
+    bp = next(p for p in b.points if p.name == "P_003")
+    cp = next(p for p in c.points if p.name == "P_003")
+    assert turned["C"].apply(cp.x, cp.y, cp.z) == pytest.approx(
+        turned["B"].apply(bp.x, bp.y, bp.z), abs=1e-6)
+    # And C has actually moved with it.
+    assert turned["C"].apply(cp.x, cp.y, cp.z)[:2] != pytest.approx(
+        plain["C"].apply(cp.x, cp.y, cp.z)[:2], abs=1.0)

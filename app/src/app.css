@@ -783,6 +783,11 @@ button{font-family:inherit}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mroom .quiet{display:block;font-size:10.5px}
 .mroom.loose b{color:var(--ink-3)}
+/* The two quarter-turn buttons, and the turn that is on, kept together so the
+   arrow you press and the angle you get are read as one control. */
+.mturn{display:flex;align-items:center;gap:3px;flex:0 0 auto}
+.mturn .btn{padding:3px 7px;font-size:13px;line-height:1}
+.mturn .num{font-size:10.5px;color:var(--gold-ink);min-width:26px;text-align:center}
 .mpair{display:flex;align-items:center;gap:6px;font-size:11px;
   font-family:var(--mono);padding:4px 0;border-bottom:1px solid var(--line)}
 .mpair span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

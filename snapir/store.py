@@ -83,6 +83,10 @@ class ProjectRecord:
     # deleted never leaves a stale transform behind it.
     merge_pairs: list[dict] = field(default_factory=list)
     merge_anchor: str | None = None
+    # Quarter turns the operator put on a room, name -> 0..3. Two matches on a
+    # short baseline fix a heading out of a couple of centimetres and can fix
+    # it wrong; the solver cannot tell, so this is where the operator says.
+    merge_turns: dict[str, int] = field(default_factory=dict)
     # Anything a newer core wrote that this implementation has no field for.
     # Never interpreted, always written back.
     extra: dict = field(default_factory=dict, repr=False, compare=False)

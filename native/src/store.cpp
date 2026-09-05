@@ -209,6 +209,7 @@ void Store::load() {
         rec.connections.push_back(connection_from_json(c));
     rec.merge_pairs = get_or(p_json, "merge_pairs", std::vector<Json>{});
     rec.merge_anchor = get_opt<std::string>(p_json, "merge_anchor");
+    rec.merge_turns = get_or(p_json, "merge_turns", std::map<std::string, int>{});
 
     projects_[rec.id] = std::move(rec);
   }
@@ -234,6 +235,7 @@ void Store::save() const {
     j["merge_pairs"] = p.merge_pairs;
     if (p.merge_anchor) j["merge_anchor"] = *p.merge_anchor;
     else j["merge_anchor"] = nullptr;
+    j["merge_turns"] = p.merge_turns;
     payload["projects"][kv.first] = j;
   }
 

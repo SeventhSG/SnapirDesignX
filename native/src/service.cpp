@@ -51,7 +51,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.4.2";
+constexpr const char* kVersion = "1.4.3";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -546,7 +546,8 @@ Json merge_json(const std::string& pid) {
   std::vector<MergePair> pairs;
   for (const auto& d : proj.merge_pairs) pairs.push_back(pair_from_json(d));
   const MergeResult now = solve_merge(
-      rooms, pairs, proj.merge_anchor ? *proj.merge_anchor : std::string());
+      rooms, pairs, proj.merge_anchor ? *proj.merge_anchor : std::string(),
+      proj.merge_turns);
 
   Json j;
   j["anchor"] = nullptr;
@@ -589,6 +590,9 @@ Json merge_json(const std::string& pid) {
     Json outline = Json::array();
     for (const auto& q : kv.second.outline)
       outline.push_back(Json::array({q.x, q.y, q.z}));
+    r["turn"] = proj.merge_turns.count(kv.first)
+                    ? ((proj.merge_turns.at(kv.first) % 4) + 4) % 4
+                    : 0;
     r["outline"] = outline;
     Json pts = Json::array();
     for (const auto& q : kv.second.points)
@@ -1440,7 +1444,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                for (const auto& d : proj.merge_pairs) pairs.push_back(pair_from_json(d));
                const MergeResult now = solve_merge(
                    rooms, pairs,
-                   proj.merge_anchor ? *proj.merge_anchor : std::string());
+                   proj.merge_anchor ? *proj.merge_anchor : std::string(),
+                   proj.merge_turns);
 
                std::vector<MergePair> fresh;
                if (b.contains("lineA") && b.contains("lineB") &&
@@ -1521,6 +1526,18 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                 if (b.value("clear", false)) {
                   proj.merge_pairs.clear();
                   proj.merge_anchor.reset();
+                  proj.merge_turns.clear();
+                }
+                if (b.contains("turn") && b["turn"].is_object()) {
+                  const std::string room = b["turn"].value("room", std::string());
+                  if (!room.empty()) {
+                    const int by = b["turn"].value("by", 1);
+                    const int was = proj.merge_turns.count(room)
+                                        ? proj.merge_turns.at(room) : 0;
+                    const int now = ((was + by) % 4 + 4) % 4;
+                    if (now) proj.merge_turns[room] = now;
+                    else proj.merge_turns.erase(room);
+                  }
                 }
                 if (b.contains("anchor")) {
                   const std::string a = b["anchor"].is_string()
@@ -1552,7 +1569,8 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                for (const auto& d : proj.merge_pairs) pairs.push_back(pair_from_json(d));
                const MergeResult now = solve_merge(
                    rooms, pairs,
-                   proj.merge_anchor ? *proj.merge_anchor : std::string());
+                   proj.merge_anchor ? *proj.merge_anchor : std::string(),
+                   proj.merge_turns);
                if (now.placed.size() < 2) {
                  fail(res, 422, "Match at least two rooms before merging.");
                  return;
