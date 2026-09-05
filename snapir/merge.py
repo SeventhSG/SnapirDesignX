@@ -360,3 +360,49 @@ def build_merged(rooms: dict[str, Room], placed: dict[str, Placement], cfg,
     for body in bodies:
         builder.Add(compound, body)
     return compound, failed, "side by side"
+
+
+# The merged whole, as a room of the project rather than only a file. It is
+# derived, never stored: correct a wall in one of the rooms it is made of and
+# the merged room has the correction the next time it is opened.
+MERGED_ROOM = "Merged"
+
+
+def assemble(rooms: dict[str, Room], placed: dict[str, Placement]) -> Room:
+    """Every placed room's drawing, carried into the project's frame, as one.
+
+    Point names are kept, prefixed by the room they came from, so a corner in
+    the merged drawing still says which survey it is from and which shot it
+    was. Roles are kept too: each room was classified on its own, correctly,
+    and re-reading four floors as if they were one would only undo that.
+
+    There is no outline. A merged stairwell is not one ring and never will be -
+    it is four rooms that happen to be in one frame now - so the body comes
+    from the rooms it is made of rather than from a ring drawn round the lot.
+    """
+    from .model import Point, Room as RoomType
+
+    out = RoomType(name=MERGED_ROOM, source="")
+    out.outline_source = "merged"
+    n = 0
+    for name in sorted(placed):
+        room = rooms.get(name)
+        if room is None:
+            continue
+        place = placed[name]
+        for p in room.points:
+            x, y, z = place.apply(p.x, p.y, p.z)
+            n += 1
+            out.points.append(Point(
+                name=f"{name}/{p.name}", x=x, y=y, z=z, layer=p.layer,
+                role=p.role, index=n, derived=p.derived,
+                source=p.source or name, moved=p.moved, pinned=p.pinned))
+        out.segments.extend((f"{name}/{a}", f"{name}/{b}") for a, b in room.segments)
+        for s in room.stations:
+            x, y, z = place.apply(s.x, s.y, s.z)
+            out.stations.append(Point(name=f"{name}/{s.name}", x=x, y=y, z=z,
+                                      layer=s.layer, role=s.role))
+    if out.points:
+        out.floor_z = min(p.z for p in out.points)
+        out.ceiling_z = max(p.z for p in out.points)
+    return out

@@ -22,12 +22,13 @@ from .elements import opening_key as _opening_key
 from .geometry import polygon_area
 from .model import KIND_LABELS, OPENING_KINDS, SHAPES, Room
 from .parser import read_project, read_room
+from .planes import level_plane
 from .settings import BuildSettings
 from .solid import BuildError, build_room, export_step, room_planes, solid_stats
 from .store import Store, app_dir
 from .tessellate import tessellate
 
-app = FastAPI(title="Snapir Design X", version="1.4.3")
+app = FastAPI(title="Snapir Design X", version="1.4.4")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -48,7 +49,32 @@ def _load(pid: str) -> dict[str, Room]:
     return _rooms[pid]
 
 
+def _merged_room(pid: str) -> Room | None:
+    """The merged whole as a room of the project.
+
+    Derived, never stored: correct a wall in one of the rooms it is made of and
+    the merged room has that correction the next time it is opened. Below two
+    placed rooms there is nothing to merge, and it does not exist.
+    """
+    from .merge import assemble
+
+    try:
+        _proj, rooms, _pairs, placed, _loose = _merge_state(pid)
+    except (KeyError, ValueError):
+        return None
+    if len(placed) < 2:
+        return None
+    return assemble(rooms, placed)
+
+
 def _room(pid: str, name: str) -> Room:
+    from .merge import MERGED_ROOM
+
+    if name == MERGED_ROOM:
+        room = _merged_room(pid)
+        if room is None:
+            raise HTTPException(404, "Match at least two rooms before merging.")
+        return room
     rooms = _load(pid)
     if name not in rooms:
         raise HTTPException(404, f"No room named {name}")
@@ -360,7 +386,12 @@ def project_rooms(pid: str):
         "thickness": proj.thickness,
         "rooms": [_room_json(_apply_overrides(pid, r), proj.overrides.get(name),
                              proj.folder)
-                  for name, r in rooms.items()],
+                  for name, r in rooms.items()]
+        # The merge, where there is one, is a room of the project like any
+        # other: it opens, it builds, it exports. It is listed last because it
+        # is made of the ones above it.
+        + ([_room_json(merged, proj.overrides.get(merged.name), proj.folder)]
+           if (merged := _merged_room(pid)) else []),
     }
 
 
@@ -508,18 +539,40 @@ def patch_settings(body: dict):
     return asdict(cfg)
 
 
+def _shape_of(pid: str, name: str, room: Room, cfg: BuildSettings, ov):
+    """One room's body, or the merged whole's.
+
+    A merged room has no outline of its own - a stairwell is not one ring - so
+    it is built from the rooms it is made of and fused, which is the same thing
+    the merged export writes.
+    """
+    from .merge import MERGED_ROOM, build_merged
+
+    if name != MERGED_ROOM:
+        return build_room(room, cfg,
+                          fixture_overrides=ov.fixture_overrides if ov else None,
+                          removed_walls=ov.removed_walls if ov else None)
+
+    _proj, rooms, _pairs, placed, _loose = _merge_state(pid)
+    shape, failed, _how = build_merged(rooms, placed, cfg)
+    if failed:
+        raise BuildError("; ".join(failed))
+    return shape
+
+
 @app.post("/projects/{pid}/rooms/{name}/build")
 def build(pid: str, name: str):
     room = _room(pid, name)
     cfg = _settings(pid)
     try:
         ov = store.get(pid).overrides.get(name)
-        shape = _quiet(build_room, room, cfg,
-                       fixture_overrides=ov.fixture_overrides if ov else None,
-                       removed_walls=ov.removed_walls if ov else None)
-        mesh = _quiet(tessellate, shape, room=room, cfg=cfg)
+        shape = _quiet(_shape_of, pid, name, room, cfg, ov)
+        from .merge import MERGED_ROOM
+        mesh = _quiet(tessellate, shape, room=None if name == MERGED_ROOM else room,
+                      cfg=cfg)
         stats = _quiet(solid_stats, shape)
-        floor, ceiling = room_planes(room, cfg)
+        floor, ceiling = room_planes(room, cfg) if room.outline else \
+            (level_plane(room.floor_z or 0.0), level_plane(room.ceiling_z or 0.0))
     except BuildError as e:
         raise HTTPException(422, str(e))
     return {
@@ -544,9 +597,7 @@ def export(pid: str, name: str):
     try:
         # Same fixture decisions the preview was built with, so the file on disk
         # is the body that was approved on screen.
-        shape = _quiet(build_room, room, cfg,
-                       fixture_overrides=ov_in.fixture_overrides if ov_in else None,
-                       removed_walls=ov_in.removed_walls if ov_in else None)
+        shape = _quiet(_shape_of, pid, name, room, cfg, ov_in)
         path = _quiet(export_step, shape, out / f"{name}.step", cfg.step_schema)
     except BuildError as e:
         raise HTTPException(422, str(e))

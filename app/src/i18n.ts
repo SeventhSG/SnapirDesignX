@@ -34,6 +34,7 @@ const en = {
   buildRoom: "Build", exportStep: "Export STEP", exportRoom: "Export",
   forDesignX: "For Design X",
   mergeTitle: "Sketch merger",
+  mergedRoom: "merged",
   mergeOpen: "Merge sketches",
   mergeHelp: "Put every room of this survey into one frame by saying which "
     + "corner in one is which corner in another.",
@@ -217,6 +218,7 @@ const tr: Record<keyof typeof en, string> = {
   buildRoom: "Oluştur", exportStep: "STEP aktar", exportRoom: "Dışa aktar",
   forDesignX: "Design X için",
   mergeTitle: "Çizim birleştirici",
+  mergedRoom: "birleşik",
   mergeOpen: "Çizimleri birleştir",
   mergeHelp: "Birindeki hangi köşenin öbüründeki hangi köşe olduğunu "
     + "söyleyerek bütün odaları tek bir sisteme oturt.",

@@ -263,6 +263,52 @@ std::vector<MergePair> endpoints_for_lines(
           MergePair{room_a.name, line_a.second, room_b.name, second}};
 }
 
+Room assemble_merged(const std::map<std::string, Room>& rooms,
+                     const std::map<std::string, Placement>& placed) {
+  Room out;
+  out.name = kMergedRoom;
+  out.outline_source = "merged";
+  int n = 0;
+  for (const auto& kv : placed) {
+    const auto it = rooms.find(kv.first);
+    if (it == rooms.end()) continue;
+    const Room& room = it->second;
+    const Placement& place = kv.second;
+    for (const auto& p : room.points) {
+      const Triple at = place.apply(p.x, p.y, p.z);
+      Point q = p;
+      q.name = kv.first + "/" + p.name;
+      q.x = at[0];
+      q.y = at[1];
+      q.z = at[2];
+      q.index = ++n;
+      if (q.source.empty()) q.source = kv.first;
+      out.points.push_back(q);
+    }
+    for (const auto& s : room.segments)
+      out.segments.emplace_back(kv.first + "/" + s.first, kv.first + "/" + s.second);
+    for (const auto& s : room.stations) {
+      const Triple at = place.apply(s.x, s.y, s.z);
+      Point q = s;
+      q.name = kv.first + "/" + s.name;
+      q.x = at[0];
+      q.y = at[1];
+      q.z = at[2];
+      out.stations.push_back(q);
+    }
+  }
+  if (!out.points.empty()) {
+    double lo = out.points.front().z, hi = lo;
+    for (const auto& p : out.points) {
+      lo = std::min(lo, p.z);
+      hi = std::max(hi, p.z);
+    }
+    out.floor_z = lo;
+    out.ceiling_z = hi;
+  }
+  return out;
+}
+
 MergedBody build_merged(const std::map<std::string, Room>& rooms,
                         const std::map<std::string, Placement>& placed,
                         const BuildSettings& cfg, bool fuse) {

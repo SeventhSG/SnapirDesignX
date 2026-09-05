@@ -35,7 +35,7 @@ def export_curves(room: Room, out_dir: str | Path, fmt: str = "iges",
 
     if fmt == "asc":
         return _write_asc(room, path)
-    if len(room.outline) < 3:
+    if len(room.outline) < 3 and not room.segments:
         raise BuildError(f"{room.name}: outline has fewer than three points")
     return _write_curves(room, path, fmt, cfg)
 
@@ -85,6 +85,22 @@ def _rings(room: Room, cfg: BuildSettings):
 
     rings: list[list[tuple[float, float, float]]] = []
     ring = [(p.x, p.y, p.z) for p in room.outline]
+    if not ring:
+        # A merged room has no ring of its own - a stairwell is not one ring -
+        # so its drawing is the lines it is made of, every one of them.
+        by = {p.name: p for p in room.points}
+        for a, b in room.segments:
+            p, q = by.get(a), by.get(b)
+            if p and q:
+                rings.append([(p.x, p.y, p.z), (q.x, q.y, q.z)])
+        for op in room.openings:
+            rings.extend(_depth_box(op, []))
+        loose = _vertices(room, rings)
+        for x, y, z in loose:
+            rings.append([(x - MARK, y, z), (x + MARK, y, z)])
+            rings.append([(x, y - MARK, z), (x, y + MARK, z)])
+            rings.append([(x, y, z - MARK), (x, y, z + MARK)])
+        return rings, loose, []
     rings.append(ring)
 
     ceil_pts = [(p.x, p.y, p.z) for p in room.ceiling]

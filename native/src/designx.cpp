@@ -194,6 +194,25 @@ Handover rings_of(const Room& room, const BuildSettings& cfg) {
     ring.push_back({p.x, p.y, p.z});
     plan.push_back({p.x, p.y});
   }
+  if (ring.empty()) {
+    // A merged room has no ring of its own - a stairwell is not one ring - so
+    // its drawing is the lines it is made of, every one of them.
+    std::map<std::string, const Point*> by;
+    for (const auto& p : room.points) by[p.name] = &p;
+    for (const auto& s : room.segments) {
+      const auto a = by.find(s.first), b = by.find(s.second);
+      if (a == by.end() || b == by.end()) continue;
+      rings.push_back({{a->second->x, a->second->y, a->second->z},
+                       {b->second->x, b->second->y, b->second->z}});
+    }
+    const auto loose = vertices_of(room, rings);
+    for (const auto& v : loose) {
+      rings.push_back({{v[0] - kMark, v[1], v[2]}, {v[0] + kMark, v[1], v[2]}});
+      rings.push_back({{v[0], v[1] - kMark, v[2]}, {v[0], v[1] + kMark, v[2]}});
+      rings.push_back({{v[0], v[1], v[2] - kMark}, {v[0], v[1], v[2] + kMark}});
+    }
+    return {rings, loose, {}};
+  }
   rings.push_back(ring);
 
   std::vector<Pt3> ceil_pts;
@@ -350,7 +369,7 @@ std::string export_curves(const Room& room, const std::string& out_dir,
   const fs::path path = dir / fs::u8path(room.name + it->second);
 
   if (fmt == "asc") return write_asc(room, path);
-  if (room.outline.size() < 3)
+  if (room.outline.size() < 3 && room.segments.empty())
     throw BuildError(room.name + ": outline has fewer than three points");
   return write_curves(room, path, fmt, cfg);
 }

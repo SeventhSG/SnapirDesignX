@@ -82,6 +82,24 @@ std::vector<MergePair> endpoints_for_lines(
     const Room& room_b, const std::pair<std::string, std::string>& line_b,
     const Placement* place_a, const Placement* place_b);
 
+// The merged whole, as a room of the project rather than only a file. It is
+// derived, never stored: correct a wall in one of the rooms it is made of and
+// the merged room has that correction the next time it is opened.
+inline const char* kMergedRoom = "Merged";
+
+// Every placed room's drawing, carried into the project's frame, as one.
+//
+// Point names are kept, prefixed by the room they came from, so a corner in the
+// merged drawing still says which survey it is from and which shot it was.
+// Roles are kept too: each room was classified on its own, correctly, and
+// re-reading four floors as if they were one would only undo that.
+//
+// There is no outline. A merged stairwell is not one ring and never will be, so
+// the body comes from the rooms it is made of rather than from a ring drawn
+// round the lot.
+Room assemble_merged(const std::map<std::string, Room>& rooms,
+                     const std::map<std::string, Placement>& placed);
+
 struct MergedBody {
   TopoDS_Shape shape;
   std::vector<std::string> failed;

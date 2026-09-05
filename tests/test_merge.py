@@ -215,3 +215,48 @@ def test_a_room_placed_through_a_turned_room_follows_it():
     # And C has actually moved with it.
     assert turned["C"].apply(cp.x, cp.y, cp.z)[:2] != pytest.approx(
         plain["C"].apply(cp.x, cp.y, cp.z)[:2], abs=1.0)
+
+
+def test_the_merge_is_a_room_of_its_own():
+    # An export is a file. A room is a thing you can open, look at, build and
+    # export - which is what the merged whole has to be.
+    from snapir.merge import MERGED_ROOM, assemble
+
+    a = _room("A")
+    b = _moved(a, "B", Placement(dx=400.0, dy=0.0, dz=280.0))
+    placed, _ = solve({"A": a, "B": b},
+                      [Pair("A", "P_002", "B", "P_001"),
+                       Pair("A", "P_003", "B", "P_004")], anchor="A")
+    merged = assemble({"A": a, "B": b}, placed)
+
+    assert merged.name == MERGED_ROOM
+    assert merged.outline_source == "merged"
+    assert len(merged.points) == len(a.points) + len(b.points)
+    assert len(merged.segments) == len(a.segments) + len(b.segments)
+    # A corner says which survey it came from and which shot it was.
+    assert merged.points[0].name.startswith("A/")
+    assert any(p.name.startswith("B/") for p in merged.points)
+    # Roles survive: each room was classified on its own, correctly.
+    assert {p.role for p in merged.points} == (
+        {p.role for p in a.points} | {p.role for p in b.points})
+    # No ring, because four floors are not one ring.
+    assert merged.outline == []
+    # It reaches from the lowest thing in it to the highest, whatever they are.
+    assert merged.floor_z == pytest.approx(min(p.z for p in merged.points))
+    assert merged.ceiling_z == pytest.approx(max(p.z for p in merged.points))
+
+
+def test_the_merged_room_follows_the_rooms_it_is_made_of():
+    # It is derived, never stored. Correct a wall in one of its parts and the
+    # merged room has that correction, without anything being rebuilt by hand.
+    from snapir.merge import assemble
+
+    a = _room("A")
+    b = _moved(a, "B", Placement(dx=400.0, dy=0.0))
+    pairs = [Pair("A", "P_002", "B", "P_001"), Pair("A", "P_003", "B", "P_004")]
+    placed, _ = solve({"A": a, "B": b}, pairs, anchor="A")
+
+    was = assemble({"A": a, "B": b}, placed).points[0].x
+    a.points[0].x -= 25.0
+    placed, _ = solve({"A": a, "B": b}, pairs, anchor="A")
+    assert assemble({"A": a, "B": b}, placed).points[0].x == pytest.approx(was - 25.0)

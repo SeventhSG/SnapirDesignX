@@ -51,7 +51,7 @@ using namespace snapir;
 
 namespace {
 
-constexpr const char* kVersion = "1.4.3";
+constexpr const char* kVersion = "1.4.4";
 
 std::mutex g_lock;
 Store* g_store = nullptr;
@@ -520,11 +520,65 @@ Room apply_overrides(const std::string& pid, const Room& parsed) {
   return room;
 }
 
+MergePair pair_from_json(const Json& d);
+std::map<std::string, Room> merged_rooms(const std::string& pid);
+
+// Where every room of a project sits relative to the rest, solved from the
+// operator's own matches.
+MergeResult merge_now(const std::string& pid,
+                      const std::map<std::string, Room>& rooms) {
+  const ProjectRecord& proj = g_store->get(pid);
+  std::vector<MergePair> pairs;
+  for (const auto& d : proj.merge_pairs) pairs.push_back(pair_from_json(d));
+  return solve_merge(rooms, pairs,
+                     proj.merge_anchor ? *proj.merge_anchor : std::string(),
+                     proj.merge_turns);
+}
+
+// The merged whole as a room of the project. Derived, never stored: correct a
+// wall in one of the rooms it is made of and the merged room has that
+// correction the next time it is opened. Below two placed rooms there is
+// nothing to merge, and it does not exist.
+bool merged_room_of(const std::string& pid, Room& out) {
+  const auto rooms = merged_rooms(pid);
+  if (rooms.size() < 2) return false;
+  const MergeResult now = merge_now(pid, rooms);
+  if (now.placed.size() < 2) return false;
+  out = assemble_merged(rooms, now.placed);
+  return true;
+}
+
 Room room_or_throw(const std::string& pid, const std::string& name) {
+  if (name == kMergedRoom) {
+    Room merged;
+    if (!merged_room_of(pid, merged))
+      throw std::runtime_error("Match at least two rooms before merging.");
+    return merged;
+  }
   auto& rooms = load_rooms(pid);
   const auto it = rooms.find(name);
   if (it == rooms.end()) throw std::out_of_range("No room named " + name);
   return apply_overrides(pid, it->second);
+}
+
+// One room's body, or the merged whole's.
+//
+// A merged room has no outline of its own - a stairwell is not one ring - so it
+// is built from the rooms it is made of and fused, which is the same thing the
+// merged export writes.
+TopoDS_Shape shape_of(const std::string& pid, const std::string& name, Room& room,
+                      const BuildSettings& cfg, const FixtureOverrides* fx,
+                      const std::vector<std::string>* walls) {
+  if (name != kMergedRoom) return build_room(room, cfg, nullptr, fx, walls);
+  const auto rooms = merged_rooms(pid);
+  const MergeResult now = merge_now(pid, rooms);
+  const MergedBody body = build_merged(rooms, now.placed, cfg);
+  if (!body.failed.empty()) {
+    std::string why;
+    for (const auto& f : body.failed) why += (why.empty() ? "" : "; ") + f;
+    throw BuildError(why);
+  }
+  return body.shape;
 }
 
 MergePair pair_from_json(const Json& d) {
@@ -999,6 +1053,13 @@ int serve(const std::string& host, int port, const std::string& web_root) {
         rooms.push_back(room_json(apply_overrides(pid, kv.second),
                                   store.override_if_any(pid, kv.first),
                                   proj.folder));
+      // The merge, where there is one, is a room of the project like any
+      // other: it opens, it builds, it exports. Listed last because it is made
+      // of the ones above it.
+      Room merged;
+      if (merged_room_of(pid, merged))
+        rooms.push_back(room_json(merged, store.override_if_any(pid, merged.name),
+                                  proj.folder));
 
       ok_json(res, Json{{"id", proj.id},
                         {"name", proj.name},
@@ -1262,12 +1323,18 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                const FixtureOverrides fx =
                    to_fixture_overrides(store.override_if_any(pid, name));
 
-               const std::vector<std::string>* rm = removed_walls_for(store, pid, name);
-               const TopoDS_Shape shape = build_room(room, cfg, nullptr, &fx, rm);
+               const TopoDS_Shape shape = shape_of(
+                   pid, name, room, cfg, &fx, removed_walls_for(store, pid, name));
                Mesh mesh = tessellate(shape);
-               name_faces(mesh, room, cfg);
+               // A merged room's faces come from four rooms at once, so they
+               // cannot be named off its own geometry.
+               if (name != kMergedRoom) name_faces(mesh, room, cfg);
                const SolidStats stats = solid_stats(shape);
-               const auto planes = room_planes(room, cfg);
+               const auto planes =
+                   room.outline.empty()
+                       ? std::make_pair(level_plane(room.floor_z ? *room.floor_z : 0.0),
+                                        level_plane(room.ceiling_z ? *room.ceiling_z : 0.0))
+                       : room_planes(room, cfg);
 
                ok_json(res,
                        Json{{"mesh", mesh_json(mesh)},
@@ -1302,11 +1369,12 @@ int serve(const std::string& host, int port, const std::string& web_root) {
                // on disk is the body that was approved on screen.
                const FixtureOverrides fx =
                    to_fixture_overrides(store.override_if_any(pid, name));
-               const TopoDS_Shape shape = build_room(
-                   room, cfg, nullptr, &fx, removed_walls_for(store, pid, name));
+               const TopoDS_Shape shape = shape_of(
+                   pid, name, room, cfg, &fx, removed_walls_for(store, pid, name));
+               const bool merged = name == kMergedRoom;
                const std::string path = export_shape(
                    shape, (out / fs::u8path(name)).u8string(), fmt, schema,
-                   &room, &cfg, &fx);
+                   merged ? nullptr : &room, &cfg, merged ? nullptr : &fx);
 
                RoomOverride& ov = store.override_for(pid, name);
                ov.step_path = path;

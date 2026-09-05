@@ -421,6 +421,9 @@ export default function App() {
     setLineSel(null);
     setAddedLines([]); setDroppedLines([]); setDroppedPoints([]);
     applied.current = "";
+    // A merged room has no ring to edit: it is four rooms in one frame, not
+    // one outline. Layer mode is what is useful there.
+    setEdit(r.outlineSource === "merged" ? "layer" : "outline");
     setResult(null);
     setTool("face");
     setScreen("work");
@@ -1337,7 +1340,9 @@ export default function App() {
 
               {inSketch && (
                 <div className="rail" role="group">
-                  {(["outline", "line", "layer"] as EditMode[]).map((m) => (
+                  {(room.outlineSource === "merged"
+                      ? (["line", "layer"] as EditMode[])
+                      : (["outline", "line", "layer"] as EditMode[])).map((m) => (
                     <button key={m} aria-pressed={edit === m}
                             onClick={() => { setEdit(m); setPending(null);
                                              if (m !== "layer") setAxisMove(false); }}>
@@ -2018,8 +2023,12 @@ function RoomCard({ room, projectId, T, onOpen }: {
       <div className="rcard-b">
         <b>{room.label}</b>
         <div className="rcard-m">
-          <StatusTag status={room.status} T={T} />
-          <span className="num">{room.area.toFixed(2)} m²</span>
+          {/* The merge is a room of the project like any other, but it is made
+              of the rooms above it rather than surveyed, and it says so. */}
+          {room.outlineSource === "merged"
+            ? <span className="tag t-ok"><i />{T("mergedRoom")}</span>
+            : <StatusTag status={room.status} T={T} />}
+          {room.area > 0 && <span className="num">{room.area.toFixed(2)} m²</span>}
           {room.ceilingHeight != null && (
             <span className="num">{room.ceilingHeight.toFixed(0)} cm</span>
           )}
