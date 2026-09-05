@@ -174,18 +174,21 @@ def _corner_walk(ring, ea: int, eb: int) -> list[int] | None:
 def _cut_bottom(op: Opening, floor: Plane | None, cx: float, cy: float) -> float:
     """Where an opening's cut starts.
 
-    A doorway goes to the floor. The bottom of it is not measured, though: the
-    surveyor shoots the jamb where the frame is, and a shot a few centimetres
-    up leaves that much wall standing under the door - a threshold slab across
-    the doorway that the building does not have. So a door is cut from the
-    floor plane, and the sill only counts where it reads lower still.
+    A doorway starts at the floor: not above it, and not below it either.
+
+    The bottom of one is not a measurement. The surveyor shoots the jamb where
+    the frame is, and that reading lands a centimetre or two either side of the
+    floor plane depending on where the tip went. Taken literally it was wrong
+    both ways: a shot above the floor left that much wall standing under the
+    door, and a shot below it drove the cut down into the slab and notched the
+    floor across the threshold. Fifty doorways in five surveys did the second.
 
     A window keeps its sill. That one really is measured, and it is the whole
     difference between a window and a door.
     """
     if op.kind != "door" or floor is None:
         return op.sill
-    return min(op.sill, floor.z_at(cx, cy))
+    return floor.z_at(cx, cy)
 
 
 def _wrapped_cutter(op: Opening, ring, seats, edges, cfg: BuildSettings, occ,

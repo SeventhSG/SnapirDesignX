@@ -38,7 +38,11 @@ def export_curves(room: Room, out_dir: str | Path, fmt: str = "iges") -> Path:
 
 
 def _rings(room: Room):
-    """Every closed or open polyline worth handing over."""
+    """Every polyline worth handing over, and every shot none of them carries.
+
+    Returns the two together because the second is worked out from the first:
+    a shot is loose exactly when no curve already passes through it.
+    """
     from .planes import fit_or_level, level_plane
 
     rings: list[list[tuple[float, float, float]]] = []
@@ -79,11 +83,12 @@ def _rings(room: Room):
     # A single shot is written as an IGES point as well, which is the exact
     # thing. The cross is for STEP, whose writer drops a loose vertex on the
     # floor: three short lines through the shot, so it arrives either way.
-    for x, y, z in _vertices(room):
+    loose = _vertices(room, rings)
+    for x, y, z in loose:
         rings.append([(x - MARK, y, z), (x + MARK, y, z)])
         rings.append([(x, y - MARK, z), (x, y + MARK, z)])
         rings.append([(x, y, z - MARK), (x, y, z + MARK)])
-    return rings
+    return rings, loose
 
 
 def _depth_box(op, ring) -> list[list[tuple[float, float, float]]]:
@@ -123,17 +128,23 @@ def _depth_box(op, ring) -> list[list[tuple[float, float, float]]]:
     return out
 
 
-def _vertices(room: Room) -> list[tuple[float, float, float]]:
-    """Points that have to survive the handover on their own.
+def _vertices(room: Room, carried) -> list[tuple[float, float, float]]:
+    """Every shot no curve carries.
 
-    The depth shots above all: they are single points, so no polyline carries
-    them, and a room exported without them arrives in Design X with every
-    rectangle looking flat against the wall. The instrument's own stations go
-    too - they are where the panoramas were taken from.
+    A depth shot, a socket, a point the classifier could not place, a corner
+    the surveyor took and never joined to anything - none of them are on a
+    polyline, so a room exported without them arrives in Design X missing
+    exactly the readings that still need a decision. Whatever the drawing
+    already says is left to the drawing; the rest go over as points.
+
+    The instrument's own stations go too: they are where the panoramas were
+    taken from.
     """
-    keep = [p for p in room.points
-            if p.role in (Role.DEPTH, Role.SOCKET, Role.PLUMBING)]
-    return [(p.x, p.y, p.z) for p in keep + room.stations]
+    seen = {(round(x, 3), round(y, 3), round(z, 3)) for ring in carried
+            for x, y, z in ring}
+    loose = [(p.x, p.y, p.z) for p in room.points
+             if (round(p.x, 3), round(p.y, 3), round(p.z, 3)) not in seen]
+    return loose + [(s.x, s.y, s.z) for s in room.stations]
 
 
 def _write_curves(room: Room, path: Path, fmt: str) -> Path:
@@ -146,7 +157,8 @@ def _write_curves(room: Room, path: Path, fmt: str) -> Path:
     compound = TopoDS_Compound()
     builder.MakeCompound(compound)
 
-    for ring in _rings(room):
+    rings, loose = _rings(room)
+    for ring in rings:
         if len(ring) < 2:
             continue
         poly = BRepBuilderAPI_MakePolygon()
@@ -160,7 +172,7 @@ def _write_curves(room: Room, path: Path, fmt: str) -> Path:
 
     # Single shots, as points. Design X shows a vertex where the instrument
     # stood; a wire cannot carry one.
-    for x, y, z in _vertices(room):
+    for x, y, z in loose:
         builder.Add(compound, BRepBuilderAPI_MakeVertex(
             gp_Pnt(x * CM_TO_MM, y * CM_TO_MM, z * CM_TO_MM)).Vertex())
 

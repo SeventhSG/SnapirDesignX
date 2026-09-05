@@ -215,3 +215,21 @@ def test_a_window_keeps_the_sill_it_was_shot_with():
     thick = BuildSettings().wall_thickness / 10.0
     shape = build_room(room, BuildSettings())
     assert _inside(shape, 195.0, -thick / 2, SILL - 30.0), "the sill was cut away"
+
+
+def test_a_doorway_does_not_notch_the_floor():
+    # The other way the sill lied: a jamb shot a centimetre below the floor
+    # datum drove the cut down into the slab, leaving a trench across the
+    # threshold. Fifty doorways in five surveys had one.
+    room = _room_with_door(-2.0)
+    assert room.openings[0].kind == "door"
+    cfg = BuildSettings()
+    thick = cfg.wall_thickness / 10.0
+    shape = build_room(room, cfg)
+
+    # The slab runs unbroken under the doorway.
+    for y in (-thick / 2, 0.0, 20.0):
+        assert _inside(shape, 195.0, y, -1.0), f"the floor was cut at y={y}"
+        assert _inside(shape, 195.0, y, -8.0), f"the slab was cut through at y={y}"
+    # And the doorway above it is still open.
+    assert not _inside(shape, 195.0, -thick / 2, 100.0)

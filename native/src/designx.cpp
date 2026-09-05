@@ -5,7 +5,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <cmath>
 #include <map>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -39,17 +41,29 @@ using Ring = std::vector<std::array<double, 3>>;
 // Half-arm of the cross drawn through a single shot, centimetres.
 constexpr double kMark = 5.0;
 
-// Points that have to survive the handover on their own.
+// Every shot no curve carries.
 //
-// The depth shots above all: they are single points, so no polyline carries
-// them, and a room exported without them arrives in Design X with every
-// rectangle looking flat against the wall. The instrument's own stations go
-// too - they are where the panoramas were taken from.
-std::vector<std::array<double, 3>> vertices_of(const Room& room) {
+// A depth shot, a socket, a point the classifier could not place, a corner the
+// surveyor took and never joined to anything - none of them are on a polyline,
+// so a room exported without them arrives in Design X missing exactly the
+// readings that still need a decision. Whatever the drawing already says is
+// left to the drawing; the rest go over as points.
+//
+// The instrument's own stations go too: they are where the panoramas were
+// taken from.
+std::array<long long, 3> key_of(double x, double y, double z) {
+  return {std::llround(x * 1000), std::llround(y * 1000), std::llround(z * 1000)};
+}
+
+std::vector<std::array<double, 3>> vertices_of(const Room& room,
+                                               const std::vector<Ring>& carried) {
+  std::set<std::array<long long, 3>> seen;
+  for (const auto& ring : carried)
+    for (const auto& p : ring) seen.insert(key_of(p[0], p[1], p[2]));
+
   std::vector<std::array<double, 3>> out;
   for (const auto& p : room.points)
-    if (p.role == Role::Depth || p.role == Role::Socket || p.role == Role::Plumbing)
-      out.push_back({p.x, p.y, p.z});
+    if (!seen.count(key_of(p.x, p.y, p.z))) out.push_back({p.x, p.y, p.z});
   for (const auto& p : room.stations) out.push_back({p.x, p.y, p.z});
   return out;
 }
@@ -104,8 +118,16 @@ void depth_box(const Opening& op, const std::vector<Pt>& ring,
   }
 }
 
-// Every closed or open polyline worth handing over.
-std::vector<Ring> rings_of(const Room& room) {
+// Every polyline worth handing over, and every shot none of them carries.
+//
+// The two come back together because the second is worked out from the first:
+// a shot is loose exactly when no curve already passes through it.
+struct Handover {
+  std::vector<Ring> rings;
+  std::vector<std::array<double, 3>> loose;
+};
+
+Handover rings_of(const Room& room) {
   std::vector<Ring> rings;
 
   Ring ring;
@@ -166,12 +188,13 @@ std::vector<Ring> rings_of(const Room& room) {
   // A single shot is written as an IGES point as well, which is the exact
   // thing. The cross is for STEP, whose writer drops a loose vertex on the
   // floor: three short lines through the shot, so it arrives either way.
-  for (const auto& v : vertices_of(room)) {
+  const auto loose = vertices_of(room, rings);
+  for (const auto& v : loose) {
     rings.push_back({{v[0] - kMark, v[1], v[2]}, {v[0] + kMark, v[1], v[2]}});
     rings.push_back({{v[0], v[1] - kMark, v[2]}, {v[0], v[1] + kMark, v[2]}});
     rings.push_back({{v[0], v[1], v[2] - kMark}, {v[0], v[1], v[2] + kMark}});
   }
-  return rings;
+  return {rings, loose};
 }
 
 std::string write_curves(const Room& room, const fs::path& path,
@@ -180,7 +203,8 @@ std::string write_curves(const Room& room, const fs::path& path,
   TopoDS_Compound compound;
   builder.MakeCompound(compound);
 
-  for (const auto& ring : rings_of(room)) {
+  const Handover handover = rings_of(room);
+  for (const auto& ring : handover.rings) {
     if (ring.size() < 2) continue;
     BRepBuilderAPI_MakePolygon poly;
     for (const auto& p : ring)
@@ -193,7 +217,7 @@ std::string write_curves(const Room& room, const fs::path& path,
 
   // Single shots, as points. Design X shows a vertex where the instrument
   // stood; a wire cannot carry one.
-  for (const auto& v : vertices_of(room))
+  for (const auto& v : handover.loose)
     builder.Add(compound, BRepBuilderAPI_MakeVertex(
                               gp_Pnt(v[0] * kCmToMm, v[1] * kCmToMm, v[2] * kCmToMm))
                               .Vertex());

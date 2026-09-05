@@ -34,6 +34,10 @@ const en = {
   buildRoom: "Build", exportStep: "Export STEP", exportRoom: "Export",
   forDesignX: "For Design X",
   fromDesignX: "From Design X",
+  designX: "Geomagic Design X",
+  designXHelp: "Send the sketch out as exact curves, edit it there, and bring "
+    + "it back into this room. The survey file is never touched.",
+  sketchIsImported: "This room is following a sketch from Design X.",
   fromDesignXHelp: "Bring the sketch back after editing it in Design X. "
     + "A corner that landed on a surveyed shot keeps that shot's name, so "
     + "everything you have already decided about this room still applies.",
@@ -189,6 +193,10 @@ const tr: Record<keyof typeof en, string> = {
   buildRoom: "Oluştur", exportStep: "STEP aktar", exportRoom: "Dışa aktar",
   forDesignX: "Design X için",
   fromDesignX: "Design X'ten al",
+  designX: "Geomagic Design X",
+  designXHelp: "Çizimi tam eğri olarak dışarı ver, orada düzenle, sonra bu "
+    + "odaya geri al. Ölçüm dosyasına hiç dokunulmaz.",
+  sketchIsImported: "Bu oda Design X'ten gelen bir çizimi izliyor.",
   fromDesignXHelp: "Design X'te düzenledikten sonra çizimi geri getirir. "
     + "Ölçülen bir noktaya denk gelen köşe o noktanın adını korur, "
     + "yani bu oda için verdiğin kararlar aynen geçerli kalır.",

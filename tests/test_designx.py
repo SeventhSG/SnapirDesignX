@@ -151,3 +151,30 @@ def test_a_point_the_last_import_brought_in_survives_the_next_one():
     second = sketch_for(with_import, _out(edited))
     assert [d["name"] for d in second["points"]] == [d["name"] for d in first["points"]]
     assert second["outline"] == first["outline"]
+
+
+def test_a_shot_no_line_touches_still_goes_over():
+    # A point the classifier could not place is exactly the one that still
+    # needs a decision, and it was the one being left behind: no polyline
+    # carries it, so without a point of its own it simply did not arrive.
+    room = _room()
+    stray = (77.0, 155.0, 42.0)
+    room.points.append(
+        __import__("snapir.model", fromlist=["Point"]).Point(
+            name="P_099", x=stray[0], y=stray[1], z=stray[2], layer=""))
+
+    pts, _lines = read_sketch(_out(room))
+    assert any(abs(p[0] - stray[0]) < 0.01 and abs(p[1] - stray[1]) < 0.01
+               and abs(p[2] - stray[2]) < 0.01 for p in pts), "the loose shot was dropped"
+
+
+def test_a_corner_the_outline_already_draws_is_not_sent_twice():
+    # Only what no curve carries. A ring corner is on the ring; sending it as a
+    # loose point as well would put a cross through every corner of the room.
+    from snapir.designx import _rings
+
+    room = _room()
+    _polylines, loose = _rings(room)
+    for p in room.outline:
+        assert not any(abs(q[0] - p.x) < 0.01 and abs(q[1] - p.y) < 0.01
+                       and abs(q[2] - p.z) < 0.01 for q in loose)

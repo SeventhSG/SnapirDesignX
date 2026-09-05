@@ -1704,6 +1704,26 @@ export default function App() {
                 )}
               </div>
 
+              {/* The trip out to Geomagic Design X and back, on the room it
+                  belongs to rather than buried in the bar along the bottom.
+                  The survey CSV is never touched by any of it. */}
+              <div className="grp">
+                <h4>{T("designX")}</h4>
+                <p className="quiet">{T("designXHelp")}</p>
+                <button className="btn q sm wide" onClick={doDesignX}>
+                  {T("forDesignX")}</button>
+                <button className="btn q sm wide" onClick={doImportDesignX}
+                        title={T("fromDesignXHelp")}>
+                  {T("fromDesignX")}</button>
+                {room.outlineSource === "Design X" && (
+                  <>
+                    <p className="quiet moved">{T("sketchIsImported")}</p>
+                    <button className="btn q sm wide delrow" onClick={doClearDesignX}>
+                      {T("clearSketch")}</button>
+                  </>
+                )}
+              </div>
+
               <div className="grp">
                 <h4>{T("roomInfo")}</h4>
                 <dl className="kv">

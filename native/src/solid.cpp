@@ -195,17 +195,20 @@ bool corner_walk(const std::vector<Pt>& ring, int ea, int eb,
 
 // Where an opening's cut starts.
 //
-// A doorway goes to the floor. The bottom of it is not measured, though: the
-// surveyor shoots the jamb where the frame is, and a shot a few centimetres up
-// leaves that much wall standing under the door - a threshold slab across the
-// doorway that the building does not have. So a door is cut from the floor
-// plane, and the sill only counts where it reads lower still.
+// A doorway starts at the floor: not above it, and not below it either.
+//
+// The bottom of one is not a measurement. The surveyor shoots the jamb where
+// the frame is, and that reading lands a centimetre or two either side of the
+// floor plane depending on where the tip went. Taken literally it was wrong
+// both ways: a shot above the floor left that much wall standing under the
+// door, and a shot below it drove the cut down into the slab and notched the
+// floor across the threshold. Fifty doorways in five surveys did the second.
 //
 // A window keeps its sill. That one really is measured, and it is the whole
 // difference between a window and a door.
 double cut_bottom(const Opening& op, const Plane* floor, double cx, double cy) {
   if (op.kind != "door" || !floor) return op.sill();
-  return std::min(op.sill(), floor->z_at(cx, cy));
+  return floor->z_at(cx, cy);
 }
 
 // The cutter for an opening that turns a corner.
